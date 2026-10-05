@@ -1,0 +1,330 @@
+/**
+ * @file Time.cpp
+ * @brief Implementation of time-related utilities and the Time class.
+
+ */
+
+#include "../../include/Ksee/Time.hpp"
+
+#if defined(FREERTOS_CONFIG_H) || defined(INC_FREERTOS_H)
+#include <FreeRTOS.h>
+#include <task.h>
+#elif defined(ARDUINO)
+#include <Arduino.h>
+#elif defined(__KERNEL__)
+#include <linux/timekeeping.h>
+#else
+  #if !defined(KSEE_NO_STD)
+  #include <time.h>
+  #endif
+  #if defined(_WIN32)
+  #include <windows.h>
+  #endif
+#endif
+
+namespace Ksee {
+
+i64 systemStartMicros = 0;
+
+static inline bool ch_eq(char a, char b) {
+  return (a == b) || (a >= 'a' && a <= 'z' && a - 32 == b) || (a >= 'A' && a <= 'Z' && a + 32 == b);
+}
+
+static inline int parse_int(const char *&str, int len) {
+  int val = 0;
+  for (int i = 0; i < len; ++i) {
+    if (*str >= '0' && *str <= '9') {
+      val = val * 10 + (*str - '0');
+      str++;
+    } else {
+      break;
+    }
+  }
+  return val;
+}
+
+i64 epochMicros() { return systemStartMicros + micros(); }
+
+i64 epochSeconds() { return epochMicros() / 1000000; }
+
+
+int getGMT() {
+  return 0;
+}
+
+void Time::syncClock(i64 now) { Ksee::systemStartMicros = now - Ksee::micros(); }
+
+void Time::civFromDays(long long z, int &y, int &m, int &d, int &doy) {
+  z += 719468;
+  const long long era = (z >= 0 ? z : z - 146096) / 146097;
+  const unsigned doe = static_cast<unsigned>(z - era * 146097);
+  const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  y = static_cast<int>(yoe) + era * 400;
+  doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const unsigned mp = (5 * doy + 2) / 153;
+  d = doy - (153 * mp + 2) / 5 + 1;
+  m = mp + (mp < 10 ? 3 : -9);
+  y += (m <= 2);
+}
+
+long long Time::daysFromCiv(int y, int m, int d) {
+  y -= (m <= 2);
+  const long long era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = static_cast<unsigned>(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + static_cast<long long>(doe) - 719468;
+}
+
+void Time::syncClock() {
+#if defined(__KERNEL__)
+  syncClock(ktime_get_real_ns() / 1000ULL);
+#elif defined(_WIN32)
+  unsigned long long ft;
+  ::GetSystemTimePreciseAsFileTime(&ft);
+  syncClock((ft - 116444736000000000ULL) / 10ULL);
+#elif defined(KSEE_NO_STD) && defined(__linux__)
+  #if defined(__x86_64__)
+    struct {
+      long long tv_sec;
+      long long tv_nsec;
+    } ts;
+    long ret;
+    __asm__ volatile (
+      "syscall"
+      : "=a"(ret)
+      : "a"(228), "D"(0), "S"(&ts)
+      : "rcx", "r11", "memory"
+    );
+    if (ret == 0) {
+      syncClock((i64)ts.tv_sec * 1000000ULL + (i64)(ts.tv_nsec / 1000));
+    }
+  #endif
+#elif defined(ARDUINO)
+  syncClock(0);
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  syncClock((i64)ts.tv_sec * 1000000ULL + (i64)(ts.tv_nsec / 1000));
+#endif
+}
+
+int Time::daysInMonth(int m, int y) {
+  static const u8 days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (m == 2 && isLeap(y))
+    return 29;
+  return days[m - 1];
+}
+
+int Time::getSecond() const { return (int)(us / US_PER_SEC); }
+int Time::getSecondInMinute() const { return (int)(us / US_PER_SEC) % 60; }
+void Time::setSecondInMinute(int v) {
+  long long baseMin = (us / US_PER_SEC) / 60;
+  us = (baseMin * 60 + v) * US_PER_SEC + (us % US_PER_SEC);
+}
+int Time::getMinute() const { return (int)(us / US_PER_MIN); }
+int Time::getMinuteInHour() const { return (int)(us / US_PER_MIN) % 60; }
+void Time::setMinuteInHour(int v) {
+  long long baseHour = (us / US_PER_MIN) / 60;
+  long long secPart = (us / US_PER_SEC) % 60;
+  us = ((baseHour * 60 + v) * 60 + secPart) * US_PER_SEC + (us % US_PER_SEC);
+}
+int Time::getHourInDay() const { return (int)(us / US_PER_HOUR) % 24; }
+void Time::setHourInDay(int v) {
+  long long days = us / US_PER_DAY;
+  long long rem = (us % US_PER_DAY) % US_PER_HOUR;
+  us = (days * 86400 + v * 3600) * US_PER_SEC + rem;
+}
+void Time::getDate(int &y, int &m, int &d, int &doy) const {
+  civFromDays(us / US_PER_DAY, y, m, d, doy);
+}
+int Time::getYear() const {
+  int y, m, d, dy;
+  getDate(y, m, d, dy);
+  return y;
+}
+int Time::getMonth() const {
+  int y, m, d, dy;
+  getDate(y, m, d, dy);
+  return m;
+}
+int Time::getDay() const {
+  int y, m, d, dy;
+  getDate(y, m, d, dy);
+  return d;
+}
+int Time::getDayInYear() const {
+  int y, m, d, dy;
+  getDate(y, m, d, dy);
+  return dy;
+}
+void Time::setYear(int v) {
+  int y, m, d, dy;
+  getDate(y, m, d, dy);
+  int maxD = daysInMonth(m, v);
+  if (d > maxD)
+    d = maxD;
+  updateDate(v, m, d);
+}
+void Time::setMonth(int v) {
+  int y, m, d, dy;
+  getDate(y, m, d, dy);
+  int maxD = daysInMonth(v, y);
+  if (d > maxD)
+    d = maxD;
+  updateDate(y, v, d);
+}
+void Time::setDay(int v) {
+  int y, m, d, dy;
+  getDate(y, m, d, dy);
+  updateDate(y, m, v);
+}
+void Time::updateDate(int y, int m, int d) {
+  us = daysFromCiv(y, m, d) * US_PER_DAY + (us % US_PER_DAY);
+}
+
+Time::Time(const String &date, const String &fmt) : us(0) {
+  const char *s = date.c_str();
+  const char *f = fmt.c_str();
+  int Y = 1970, M = 1, D = 1, h = 0, mn = 0, sc = 0;
+  bool isPM = false;
+  int tzH = 0, tzM = 0;
+  while (*f) {
+    if (*f == 'y' && *(f + 1) == 'y' && *(f + 2) == 'y' && *(f + 3) == 'y') {
+      Y = parse_int(s, 4);
+      f += 4;
+    } else if (*f == 'm' && *(f + 1) == 'm') {
+      bool isMinute = false;
+      const char *back = f;
+      while (back > fmt.c_str()) {
+        if (*back == 'h') {
+          isMinute = true;
+          break;
+        }
+        back--;
+      }
+      int val = parse_int(s, 2);
+      if (isMinute)
+        mn = val;
+      else
+        M = val;
+      f += 2;
+    } else if (*f == 'd' && *(f + 1) == 'd') {
+      D = parse_int(s, 2);
+      f += 2;
+    } else if (*f == 'h' && *(f + 1) == 'h') {
+      h = parse_int(s, 2);
+      f += 2;
+    } else if (*f == 's' && *(f + 1) == 's') {
+      sc = parse_int(s, 2);
+      f += 2;
+    } else if (*f == 'r' && *(f + 1) == 'r') {
+      if (ch_eq(*s, 'P') && ch_eq(*(s + 1), 'M'))
+        isPM = true;
+      s += 2;
+      f += 2;
+    } else if (*f == 'z' && *(f + 1) == 'z') {
+      int sign = (*s == '-') ? -1 : 1;
+      if (*s == '-' || *s == '+')
+        s++;
+      tzH = parse_int(s, 2);
+      if (*s == ':')
+        s++;
+      if (*s >= '0' && *s <= '9')
+        tzM = parse_int(s, 2);
+      tzH *= sign;
+      tzM *= sign;
+      f += 2;
+    } else {
+      if (*s == *f)
+        s++;
+      f++;
+    }
+  }
+  if (isPM && h < 12)
+    h += 12;
+  if (!isPM && h == 12)
+    h = 0;
+  us = (daysFromCiv(Y, M, D) * 86400LL + h * 3600LL + mn * 60LL + sc -
+        (tzH * 3600LL + tzM * 60LL)) *
+       US_PER_SEC;
+}
+
+String Time::toString(const String &fmt, int targetTzHours) const {
+  long long localUs = us + (targetTzHours * 3600LL * US_PER_SEC);
+
+  int y, m, d, doy;
+  long long days = localUs / US_PER_DAY;
+  civFromDays(days, y, m, d, doy);
+
+  long long timeOfDay = localUs % US_PER_DAY;
+  int h = (int)(timeOfDay / US_PER_HOUR);
+  int mn = (int)(timeOfDay % US_PER_HOUR) / US_PER_MIN;
+  int s = (int)(timeOfDay % US_PER_MIN) / US_PER_SEC;
+
+  String res;
+  const char *f = fmt.c_str();
+
+  while (*f) {
+    if (*f == 'y' && *(f + 1) == 'y' && *(f + 2) == 'y' && *(f + 3) == 'y') {
+      res += y;
+      f += 4;
+    } else if (*f == 'm' && *(f + 1) == 'm') {
+      bool isMin = false;
+      const char *back = f;
+      while (back > fmt.c_str()) {
+        if (*back == 'h') {
+          isMin = true;
+          break;
+        }
+        back--;
+      }
+      int v = isMin ? mn : m;
+      if (v < 10)
+        res += '0';
+      res += v;
+      f += 2;
+    } else if (*f == 'd' && *(f + 1) == 'd') {
+      if (d < 10)
+        res += '0';
+      res += d;
+      f += 2;
+    } else if (*f == 'h' && *(f + 1) == 'h') {
+      if (h < 10)
+        res += '0';
+      res += h;
+      f += 2;
+    } else if (*f == ':' && *(f + 1) == 'm' && *(f + 2) == 'm') {
+      res += ':';
+      if (mn < 10)
+        res += '0';
+      res += mn;
+      f += 3;
+    } else if (*f == 's' && *(f + 1) == 's') {
+      if (s < 10)
+        res += '0';
+      res += s;
+      f += 2;
+    } else if (*f == 'r' && *(f + 1) == 'r') {
+      res += (h >= 12) ? "PM" : "AM";
+      f += 2;
+    } else if (*f == 'z' && *(f + 1) == 'z') {
+      if (targetTzHours >= 0)
+        res += '+';
+      else
+        res += '-';
+      int absH = targetTzHours < 0 ? -targetTzHours : targetTzHours;
+      if (absH < 10)
+        res += '0';
+      res += absH;
+      res += ":00";
+      f += 2;
+    } else {
+      res += *f;
+      f++;
+    }
+  }
+  return res;
+}
+
+} // namespace Ksee

@@ -5,7 +5,7 @@ authors:
   given-names: "Abderrahmene"
   alias: "Xi"
 title: "A zero exception C++ core library."
-version: "1.0.0"
+version: "0.0.1"
 date-released: 2026-06-13
-url: "https://github.com/ksee6/xic"
-repository-code: "https://github.com/ksee6/xic"
+url: "https://github.com/ksee6/standard"
+repository-code: "https://github.com/ksee6/standard"

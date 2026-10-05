@@ -1,7 +1,7 @@
 {
-  "name": "xic",
-  "version": "1.0.0",
-  "description": "The Zero-Exception C++ Core Library designed for embedded systems and real-time workloads: memory-deterministic collections, microsecond SFI sandboxed tasks with JIT redundant bounds check elimination (BCE) and prioritized swap paging, CLI command parser, spatial transformations, and hardware driver frameworks.",
+  "name": "standard",
+  "version": "0.0.1",
+  "description": "The Zero-Exception C++ Standard Library designed for embedded systems and real-time workloads.",
   "keywords": [
     "esp32",
     "embedded",
@@ -16,11 +16,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ksee6/xic.git"
+    "url": "https://github.com/ksee6/standard.git"
   },
   "authors": [
     {
-      "name": "Abderrahmene MERZOUG"
+      "name": "Abderrahmene MERZOUG (ksee6)"
     }
   ],
   "license": "Apache-2.0",
