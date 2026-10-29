@@ -1,11 +1,14 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
-- family-names: "Merzoug"
-  given-names: "Abderrahmene"
-  alias: "Xi"
-title: "A zero exception C++ core library."
-version: "0.0.1"
-date-released: 2026-06-13
-url: "https://github.com/ksee6/standard"
+  - family-names: "Merzoug"
+    given-names: "Abderrahmene"
+    alias: "Ksee"
+    orcid: "https://orcid.org/0009-0002-7580-2748"
+title: "Mist"
+url: "https://ksee.dev/standard"
 repository-code: "https://github.com/ksee6/standard"
+identifiers:
+  - type: url
+    value: "https://ksee.dev/standard"
+    description: "Official Mist documentation and specification"
