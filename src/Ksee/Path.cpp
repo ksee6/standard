@@ -309,6 +309,20 @@ bool Path::isIpv6() const {
     return false;
 }
 
+bool Path::isBack() const {
+    return parts.size() == 2 && parts[0] == "0" && parts[1] == "1";
+}
+
+static Path createBackPath() {
+    Path p;
+    p.parts.push("0");
+    p.parts.push("1");
+    p.mode = 1;
+    return p;
+}
+
+const Path Path::Back = createBackPath();
+
 Path Path::base() const {
     if (isTagged()) {
         if (parts.size() < 2) return Path();
@@ -392,6 +406,7 @@ void Path::setParam(const String &key, const String &value) {
         for (usz i = 0; i < old.parts.size(); ++i) parts.push(old.parts[i]);
         parts.push("0"); // path length 0
         parts.push("");  // tag
+        mode = 3;
     }
 
     usz baseLen = (usz)parts[3].toLong();

@@ -47,6 +47,13 @@ public:
     virtual bool asBool() const;
     virtual f64 asNumber() const;
 
+    virtual String toString() const;
+    static Tree<void> parse(const String &val);
+    static Array<Tree<void>> parseMany(const String &data);
+
+    String toBinary() const;
+    bool readFromBinary(const u8 *data, usz length, usz &bytesRead);
+
     static Tree<void>* fromString(const String &val);
     static Tree<void>* fromNumber(f64 val);
     static Tree<void>* fromBool(bool val);
@@ -251,8 +258,29 @@ public:
         return _parent ? _parent->get(_path) : nullptr;
     }
 
+    template <typename ValT, typename = typename std::enable_if<!std::is_same_v<std::decay_t<ValT>, TreeProxy> && !std::is_same_v<std::decay_t<ValT>, Tree<void>*>>::type>
+    operator ValT() const {
+        Tree<void>* n = node();
+        return n ? n->as<ValT>() : ValT();
+    }
+
+    template <typename ValT>
+    ValT as() const {
+        Tree<void>* n = node();
+        return n ? n->as<ValT>() : ValT();
+    }
+
+    String asString() const { return as<String>(); }
+    bool asBool() const { return as<bool>(); }
+    f64 asNumber() const { return as<f64>(); }
+
     Tree<void>* operator->() const {
         return node();
+    }
+
+    Tree<String>* operator=(const char* val) {
+        if (!_parent) return nullptr;
+        return _parent->push(_path, String(val));
     }
 
     template <typename ValT>

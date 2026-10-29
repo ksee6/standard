@@ -123,6 +123,16 @@ EID::EID(const String &str) {
         id = 0;
         return;
     }
+    if (str.size() == 16) {
+        created_at = 0;
+        id = 0;
+        const u8 *bytes = (const u8*)str.data();
+        for (int i = 0; i < 8; i++) {
+            created_at = (created_at << 8) | bytes[i];
+            id = (id << 8) | bytes[8 + i];
+        }
+        return;
+    }
     u8 bytes[16] = {0};
     usz n = decodeCB32BigEndian(str, bytes, 16);
     if (n == 16) {
@@ -153,6 +163,15 @@ String EID::toString() const {
         bytes[8 + i] = (u8)((id >> ((7 - i) * 8)) & 0xFF);
     }
     return encodeCB32BigEndian(bytes, 16);
+}
+
+String EID::toBinary() const {
+    u8 bytes[16];
+    for (int i = 0; i < 8; i++) {
+        bytes[i] = (u8)((created_at >> ((7 - i) * 8)) & 0xFF);
+        bytes[8 + i] = (u8)((id >> ((7 - i) * 8)) & 0xFF);
+    }
+    return String(bytes, 16);
 }
 
 } // namespace Ksee

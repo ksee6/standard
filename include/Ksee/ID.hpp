@@ -58,6 +58,7 @@ struct EID {
     bool isNil() const { return created_at == 0 && id == 0; }
 
     String toString() const;
+    String toBinary() const;
 
     explicit operator bool() const { return !isNil(); }
 

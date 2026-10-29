@@ -183,7 +183,7 @@ void randomFill(u8 *buffer, usz size) {
 // Uptime Clock Implementation
 // -------------------------------------------------------------------------
 
-#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(MECA_EMBEDDED)
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(MECA_EMBEDDED) || defined(__EMSCRIPTEN__) || defined(__wasm__)
 static u64 getBootNanos() {
   struct timespec ts = {0, 0};
 #if defined(CLOCK_BOOTTIME)
@@ -243,7 +243,7 @@ bool isEpochTimeSet = false;
 u64 epochOnStart = 0;
 
 bool autoSetEpochTime() {
-#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__wasm__)
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == 0 && ts.tv_sec > 0) {
         u64 nowMs = (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000ULL);
@@ -279,12 +279,19 @@ bool autoSetEpochTime() {
 #endif
 }
 
+#if defined(__EMSCRIPTEN__)
+extern "C" double emscripten_date_now(void);
+u64 epochMillis() {
+    return (u64)emscripten_date_now();
+}
+#else
 u64 epochMillis() {
     if (!isEpochTimeSet) {
         autoSetEpochTime();
     }
     return epochOnStart + millis();
 }
+#endif
 
 // -------------------------------------------------------------------------
 // Crockford's Base32 Implementation

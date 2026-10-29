@@ -13,6 +13,7 @@
 #include "../include/Ksee/ID.hpp"
 #include "../include/Ksee/Path.hpp"
 #include "../include/Ksee/Tree.hpp"
+#include "../include/Ksee/Resource/Router.hpp"
 #include "../include/Ksee/Crypto/Hash.hpp"
 #include "../include/Ksee/Crypto/SHA.hpp"
 #include "../include/Ksee/Crypto/Chacha.hpp"
@@ -21,6 +22,7 @@
 #include "../include/Ksee/Crypto/Password.hpp"
 #include "../include/Ksee/Format/Yaml.hpp"
 #include "../include/Ksee/Auth/JWT.hpp"
+#include "../include/Ksee/Auth/Writ.hpp"
 #include "../include/Ksee/Parse/Regex.hpp"
 #include "../include/Ksee/Compression/Deflate.hpp"
 #include "../include/Ksee/Compression/Tar.hpp"
@@ -37,6 +39,8 @@
 #include "../include/Ksee/Math/Random.hpp"
 #include "../include/Ksee/Math/Interval.hpp"
 #include "../include/Ksee/Debug/Log.hpp"
+#include "../include/Ksee/Resource/Handle.hpp"
+#include "../include/Ksee/Resource/FS.hpp"
 
 using namespace Ksee;
 
@@ -278,7 +282,278 @@ static void test_tree() {
     bool deleted = root.deleteKey("users/bob");
     assert(deleted);
     assert(!root.has("users/bob"));
+
+    // Serialization & compact encoding tests
+    Tree<void> serialRoot;
+    serialRoot["settings"]["active"] = true;
+    serialRoot["settings"]["count"] = 42;
+    serialRoot["settings"]["ratio"] = 3.14;
+    serialRoot["settings"]["name"] = "test-tree";
+
+    String enc = serialRoot.toString();
+    assert(!enc.isEmpty());
+
+    // Decode via constructor Tree(String)
+    Tree<void> restored(enc);
+    assert(restored["settings"]["active"].asBool() == true);
+    assert(restored["settings"]["count"].as<int>() == 42);
+    assert(restored["settings"]["name"].asString() == "test-tree");
+    f64 ratio = restored["settings"]["ratio"].as<f64>();
+    assert(ratio > 3.13 && ratio < 3.15);
+
+    // Decode via parseMany
+    String combined = serialRoot.toString() + serialRoot.toString();
+    Array<Tree<void>> many = Tree<void>::parseMany(combined);
+    assert(many.size() == 2);
+    assert(many[0]["settings"]["name"].asString() == "test-tree");
+    assert(many[1]["settings"]["count"].as<int>() == 42);
+
     printf("  PASS: Tree\n");
+}
+
+struct MockRequest {
+    String response;
+    bool write(const String &s) {
+        response += s;
+        return true;
+    }
+};
+
+static void test_router() {
+    printf("[TEST] Router (Resource/Router, Radix Tree Routing, Lifecycle Hooks)...\n");
+    using namespace Ksee::Resource;
+
+    Router<MockRequest> router;
+
+    bool leavingFired = false;
+    bool resolvedFired = false;
+    bool doneFired = false;
+
+    router.onLeaving([&](Path &p, MockRequest &req) -> bool {
+        leavingFired = true;
+        if (p == Path("/forbidden")) return false; // cancel
+        return true;
+    });
+
+    router.onResolved([&](Path &p, MockRequest &req) {
+        resolvedFired = true;
+    });
+
+    router.onDone([&]() {
+        doneFired = true;
+    });
+
+    // 1. Fallthrough test
+    router.handle("/api/data", [](Path &p, MockRequest &req) -> bool {
+        req.write("[middleware]");
+        return false; // pass to next
+    });
+
+    router.get("/api/data", [](Path &p, MockRequest &req) -> bool {
+        req.write("[handled:data]");
+        return true;
+    });
+
+    MockRequest req1;
+    bool ok1 = router.visit("/api/data", req1);
+    assert(ok1);
+    assert(leavingFired);
+    assert(resolvedFired);
+    assert(doneFired);
+    assert(router.currentRequest.response == "[middleware][handled:data]");
+
+    // 2. Guard cancellation test
+    leavingFired = false;
+    doneFired = false;
+    MockRequest req2;
+    bool ok2 = router.visit("/forbidden", req2);
+    assert(!ok2);
+    assert(leavingFired);
+    assert(!doneFired);
+
+    // 3. Method isolation test
+    router.post("/items", [](Path &p, MockRequest &req) -> bool {
+        req.write("[post-item]");
+        return true;
+    });
+
+    MockRequest reqPost;
+    Path postPath("/items");
+    postPath.setMethod("POST");
+    bool okPost = router.visit(postPath, reqPost);
+    assert(okPost);
+    assert(router.currentRequest.response == "[post-item]");
+
+    // GET on /items should fail
+    MockRequest reqGet;
+    Path getPath("/items");
+    getPath.setMethod("GET");
+    bool okGet = router.visit(getPath, reqGet);
+    assert(!okGet);
+
+    // 4. Path modification & Back test
+    assert(Path::Back.isBack());
+    router.handle("/redirect-me", [](Path &p, MockRequest &req) -> bool {
+        p = Path("/api/data");
+        return false; // re-routes to /api/data
+    });
+
+    MockRequest reqRedir;
+    bool okRedir = router.visit("/redirect-me", reqRedir);
+    assert(okRedir);
+    assert(router.currentRequest.response == "[middleware][handled:data]");
+
+    printf("  PASS: Router\n");
+}
+
+static void test_writ() {
+    printf("[TEST] Writ (Auth/Writ, PKI, Chains of Trust, Masking)...\n");
+
+    // 1. Canonical hash determinism and sorting
+    Tree<void> w1;
+    w1["public"] = "12345678901234567890123456789012";
+    w1["name"] = "writ-one";
+    w1["created"] = 1000;
+
+    Tree<void> w2;
+    // Inserted in different order
+    w2["created"] = 1000;
+    w2["public"] = "12345678901234567890123456789012";
+    w2["name"] = "writ-one";
+
+    String h1 = Writ::canonicalHash(w1);
+    String h2 = Writ::canonicalHash(w2);
+    assert(h1 == h2);
+    assert(h1.size() == 16);
+
+    String hSecret = Writ::canonicalHash(w1, "my-secret-key");
+    assert(hSecret.size() == 16);
+    assert(hSecret != h1);
+
+    // 2. Symmetric hash & unhash
+    Writ::hash("my-secret-key", w1);
+    assert(w1.has("hash"));
+    assert(w1["hash"].asString() == hSecret);
+
+    // Canonical hash ignores hash field
+    assert(Writ::canonicalHash(w1, "my-secret-key") == hSecret);
+
+    Writ::unhash(w1);
+    assert(!w1.has("hash"));
+
+    // 3. Vouching with Ed25519
+    EdKeypair rootKp = EdKeypair::generate();
+    EdKeypair leafKp = EdKeypair::generate();
+
+    Tree<void> leafWrit;
+    leafWrit["public"] = leafKp.publicKey().asString();
+    leafWrit["name"] = "leaf";
+    leafWrit["created"] = 500;
+    leafWrit["expires"] = 5000;
+    leafWrit["perm"]["storage/*"] = 10;
+
+    Writ::vouch(rootKp, leafWrit);
+    assert(leafWrit.has("vouch"));
+
+    // Canonical hash ignores vouch field
+    assert(Writ::canonicalHash(leafWrit) == Writ::canonicalHash(leafWrit));
+
+    // 4. Validate direct trust
+    Array<Tree<void>> pool;
+    pool.push(leafWrit);
+
+    Array<String> roots;
+    roots.push(rootKp.publicKey().asString());
+
+    Array<String> leafHints;
+    leafHints.push(leafKp.publicKey().asString());
+
+    auto directChains = Writ::validate(leafHints, pool, roots, 1000);
+    assert(directChains.size() == 1);
+    assert(directChains[0].size() == 1);
+    assert(directChains[0][0]["name"].asString() == "leaf");
+
+    // Time expiry check: now > expires
+    auto expiredChains = Writ::validate(leafHints, pool, roots, 6000);
+    assert(expiredChains.size() == 0);
+
+    // now == 0 ignores expiry
+    auto noTimeChains = Writ::validate(leafHints, pool, roots, 0);
+    assert(noTimeChains.size() == 1);
+
+    // 5. Multi-hop delegation chain: Root -> Admin -> Worker
+    EdKeypair adminKp = EdKeypair::generate();
+    EdKeypair workerKp = EdKeypair::generate();
+
+    Tree<void> adminWrit;
+    adminWrit["public"] = adminKp.publicKey().asString();
+    adminWrit["name"] = "admin";
+    adminWrit["perm"]["cluster/*"] = 20;
+    Writ::vouch(rootKp, adminWrit);
+
+    Tree<void> workerWrit;
+    workerWrit["public"] = workerKp.publicKey().asString();
+    workerWrit["name"] = "worker";
+    workerWrit["perm"]["cluster/node1"] = 15;
+    workerWrit["perm"]["cluster/unauthorized"] = 50; // tries to exceed parent
+    workerWrit["perm"]["outside/*"] = 5; // outside parent scope
+    Writ::vouch(adminKp, workerWrit);
+
+    Array<Tree<void>> chainPool;
+    chainPool.push(adminWrit);
+    chainPool.push(workerWrit);
+
+    Array<String> workerHints;
+    workerHints.push(workerKp.publicKey().asString());
+
+    auto multiChains = Writ::validate(workerHints, chainPool, roots, 0);
+    assert(multiChains.size() == 1);
+    assert(multiChains[0].size() == 2);
+    assert(multiChains[0][0]["name"].asString() == "admin");
+    assert(multiChains[0][1]["name"].asString() == "worker");
+
+    // 6. Capability masking (Writ::mask)
+    Tree<void> effective = Writ::mask(multiChains[0]);
+    // cluster/node1 was reduced to 15 (min(20, 15) = 15)
+    Tree<void>* n1 = effective.query("cluster/node1");
+    assert(n1 != nullptr);
+    assert((int)n1->asNumber() == 15);
+
+    // cluster/unauthorized was clamped to parent limit of 20
+    Tree<void>* unauth = effective.query("cluster/unauthorized");
+    assert(unauth != nullptr);
+    assert((int)unauth->asNumber() == 20);
+
+    // outside/* was outside parent's allowed rules, masked to 0
+    Tree<void>* out = effective.query("outside/foo");
+    assert(out != nullptr);
+    assert((int)out->asNumber() == 0);
+
+    // 7. Symmetric authentication by root secret
+    Tree<void> secretWrit;
+    secretWrit["public"] = workerKp.publicKey().asString();
+    secretWrit["name"] = "backend-service";
+    Writ::hash("shared-backend-secret", secretWrit);
+
+    Array<Tree<void>> symPool;
+    symPool.push(secretWrit);
+
+    Array<String> symRoots;
+    symRoots.push("shared-backend-secret");
+
+    Array<String> symHints;
+    symHints.push(workerKp.publicKey().asString());
+
+    auto symChains = Writ::validate(symHints, symPool, symRoots, 0);
+    assert(symChains.size() == 1);
+    assert(symChains[0].size() == 1);
+    assert(symChains[0][0]["name"].asString() == "backend-service");
+
+    // Unvouch
+    Writ::unvouch(adminKp, workerWrit);
+    assert(!workerWrit.has("vouch"));
+
+    printf("  PASS: Writ\n");
 }
 
 static void test_crypto() {
@@ -516,8 +791,63 @@ static void test_iterator() {
         sum += val;
     }
     assert(sum == 60);
-
     printf("  PASS: Iterator\n");
+}
+
+static void test_resource_handle_fs() {
+    printf("[TEST] Resource Handle & FS...\n");
+    // 1. Packet & In-Memory Handle
+    Packet p("hello world");
+    p.author = 42;
+    p.position = 100;
+    assert(p.author == 42);
+    assert(p.position == 100);
+    assert(p == "hello world");
+    assert(p.length() == 11);
+
+    Packet copy = p;
+    assert(copy.author == 42);
+    assert(copy == "hello world");
+
+    Handle inMem;
+    inMem.write("chunk1-");
+    inMem.write("chunk2");
+    assert(inMem.read() == "chunk1-chunk2");
+
+    // 2. FS Root & Preamble Sandboxing
+    OSFilesystem jail;
+    jail.root = "/tmp/sandbox";
+    jail.preamble = "/app";
+    String resolved = jail.resolve(Path("/users/../../secret.txt"));
+    assert(resolved == "/tmp/sandbox/app/secret.txt");
+    assert(resolved.startsWith("/tmp/sandbox"));
+
+    // 3. OSFilesystem Singleton I/O Operations
+    Path testFile("/tmp/ksee_test_fs_unit.txt");
+    fs.write(testFile, "Hello World from FS!");
+    String content = fs.read(testFile);
+    assert(content == "Hello World from FS!");
+
+    fs.append(testFile, " Appended line.");
+    String appended = fs.read(testFile);
+    assert(appended == "Hello World from FS! Appended line.");
+
+    // Direct open Handle
+    Handle h = fs.open(testFile);
+    assert(!h.isClosed());
+    assert(h.size == appended.size());
+    String partial = h.read(5, 0);
+    assert(partial == "Hello");
+    h.close();
+
+    // Signal: Move
+    Path movedFile("/tmp/ksee_test_fs_unit_moved.txt");
+    assert(fs.move(movedFile, testFile));
+    assert(fs.read(movedFile) == appended);
+
+    // Signal: Unlink
+    assert(fs.unlink(movedFile));
+    printf("  PASS: Resource Handle & FS\n");
 }
 
 int main() {
@@ -528,12 +858,15 @@ int main() {
     test_types();
     test_func();
     test_iterator();
+    test_resource_handle_fs();
     test_array_string();
     test_sparse_set_map();
     test_uuid();
     test_eid_and_cb32();
     test_path();
     test_tree();
+    test_router();
+    test_writ();
     test_crypto();
     test_yaml_jwt();
     test_compression();

@@ -83,6 +83,8 @@ public:
     data.heap = nullptr;
   }
 
+  Func(decltype(nullptr)) : Func() {}
+
   /** @brief Constructs from a raw function pointer. */
   Func(R (*f)(Args...)) {
     using DecayedF = R (*)(Args...);
@@ -93,7 +95,7 @@ public:
   }
 
   /** @brief Constructs from any callable object (lambdas, functors). */
-  template <typename Callable, typename = typename Ksee::EnableIf<!Ksee::IsSame<typename Ksee::Decay<Callable>::Type, Func>::Value>::Type>
+  template <typename Callable, typename = typename Ksee::EnableIf<!Ksee::IsSame<typename Ksee::Decay<Callable>::Type, Func>::Value && !Ksee::IsSame<typename Ksee::Decay<Callable>::Type, decltype(nullptr)>::Value>::Type>
   Func(Callable f) {
     using DecayedF = typename Ksee::Decay<Callable>::Type;
     invoke_ptr = invoke_fn<DecayedF>;

@@ -37,6 +37,9 @@ public:
     bool isUrl() const;
     bool isIpv4() const;
     bool isIpv6() const;
+    bool isBack() const;
+
+    static const Path Back;
 
     // URL & Tag manipulation
     String getParam(const String &key) const;

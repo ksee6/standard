@@ -31,7 +31,7 @@ static inline void store64_le(u8 *p, u64 v) {
 
 typedef unsigned __int128 poly128;
 
-static void poly1305_auth(u8 tag[16], const u8 *msg, usz len, const u8 key[32]) {
+void poly1305_auth(u8 tag[16], const u8 *msg, usz len, const u8 key[32]) {
   u64 r0 = load64_le(key) & 0x0ffffffc0fffffffULL;
   u64 r1 = load64_le(key + 8) & 0x0ffffffc0ffffffcULL;
   u64 s0 = load64_le(key + 16);

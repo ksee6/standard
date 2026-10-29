@@ -26,6 +26,8 @@ struct AEAD {
     String toStringVarHeader() const;
 };
 
+void poly1305_auth(u8 tag[16], const u8 *msg, usz len, const u8 key[32]);
+
 AEAD seal(const AEAD &input, u256 key, u64 nonce, int rounds = 12);
 AEAD open(const AEAD &input, u256 key, u64 nonce, int rounds = 12);
 
