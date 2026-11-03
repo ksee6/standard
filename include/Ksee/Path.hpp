@@ -38,8 +38,12 @@ public:
     bool isIpv4() const;
     bool isIpv6() const;
     bool isBack() const;
+    bool isSelf() const;
+    bool isControl() const;
 
     static const Path Back;
+    static const Path Self;
+    static const Path Control;
 
     // URL & Tag manipulation
     String getParam(const String &key) const;

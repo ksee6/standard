@@ -56,6 +56,8 @@ using i32 = int;
 using u64 = unsigned long long;
 using i64 = long long;
 
+using byte = bool;
+
 // -------------------------------------------------------------------------
 // Fixed-width Byte Array Types (128-bit, 256-bit, 512-bit)
 // -------------------------------------------------------------------------

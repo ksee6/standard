@@ -310,18 +310,43 @@ bool Path::isIpv6() const {
 }
 
 bool Path::isBack() const {
-    return parts.size() == 2 && parts[0] == "0" && parts[1] == "1";
+    return (parts.size() >= 2 && parts[0] == "1" && parts[1] == "1") ||
+           (parts.size() == 2 && parts[0] == "0" && parts[1] == "1");
+}
+
+bool Path::isSelf() const {
+    return parts.size() == 1 && parts[0] == "0";
+}
+
+bool Path::isControl() const {
+    return parts.size() > 0 && parts[0] == "1";
 }
 
 static Path createBackPath() {
     Path p;
-    p.parts.push("0");
     p.parts.push("1");
-    p.mode = 1;
+    p.parts.push("1");
+    p.mode = 0;
+    return p;
+}
+
+static Path createSelfPath() {
+    Path p;
+    p.parts.push("0");
+    p.mode = 0;
+    return p;
+}
+
+static Path createControlPath() {
+    Path p;
+    p.parts.push("1");
+    p.mode = 0;
     return p;
 }
 
 const Path Path::Back = createBackPath();
+const Path Path::Self = createSelfPath();
+const Path Path::Control = createControlPath();
 
 Path Path::base() const {
     if (isTagged()) {

@@ -45,7 +45,10 @@ public:
 
     Interval() : left(0), right(0), step(0), flags(0) {}
 
-    Interval(T l, T r, u8 f, T st = 0) : left(l), right(r), step(st), flags(f) {}
+    Interval(T l, T r, u8 f = 0, T st = 0) : left(l), right(r), step(st), flags(f) {}
+
+    T from() const { return left; }
+    T to() const { return right; }
 
     bool lopen() const { return (flags & 1) != 0; }
     bool ropen() const { return (flags & 2) != 0; }

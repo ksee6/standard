@@ -311,6 +311,208 @@ static void test_tree() {
     printf("  PASS: Tree\n");
 }
 
+// Custom types for testing Tree<T>
+struct Point2D {
+    int x;
+    int y;
+};
+
+struct PlayerState {
+    String name;
+    int health;
+
+    String petrify() const {
+        return name + ":" + String(health);
+    }
+
+    static PlayerState hydrate(const String &s) {
+        Array<String> parts = s.split(":");
+        PlayerState p;
+        if (parts.size() >= 2) {
+            p.name = parts[0];
+            p.health = parts[1].toInt();
+        }
+        return p;
+    }
+};
+
+static void test_standard_trees_and_petrify() {
+    printf("[TEST] Standard Trees, Custom Typs, YAML/JSON Parser, and Petrified Tree...\n");
+
+    // 1. Standard tree specializations
+    Tree<u64> t_u64(12345678901234ULL);
+    Tree<f64> t_f64(3.14159265);
+    Tree<u32> t_u32(42000U);
+    Tree<f32> t_f32(1.5f);
+    Tree<i32> t_i32(-100);
+    Tree<i64> t_i64(-9876543210LL);
+    Tree<u8> t_u8((u8)250);
+    Tree<byte> t_byte(true); // byte is bool
+    Tree<String> t_str("standard-tree");
+    Tree<Comment> t_comm("this is a comment");
+
+    // Verify Comment extends String
+    assert(static_cast<String*>(&t_comm.value) != nullptr);
+    assert(t_comm.value == "this is a comment");
+
+    // Verify typed extraction
+    assert(t_u64.as<u64>() == 12345678901234ULL);
+    assert(t_u64.asUint() == 12345678901234ULL);
+    assert(t_f64.as<f64>() > 3.14 && t_f64.as<f64>() < 3.15);
+    assert(t_u32.as<u32>() == 42000U);
+    assert(t_f32.as<f32>() > 1.49f && t_f32.as<f32>() < 1.51f);
+    assert(t_i32.as<i32>() == -100);
+    assert(t_i32.asInt() == -100);
+    assert(t_i64.as<i64>() == -9876543210LL);
+    assert(t_u8.as<u8>() == 250);
+    assert(t_byte.as<byte>() == true);
+    assert(t_byte.asBool() == true);
+    assert(t_str.asString() == "standard-tree");
+    assert(t_comm.asString() == "this is a comment");
+
+    // 2. Native array vs object handling
+    Tree<void> arr;
+    arr.push(10);
+    arr.push(20);
+    arr.push(30);
+    assert(arr.isArray());
+    assert(!arr.isObject());
+    assert(arr.size() == 3);
+
+    Tree<void> obj;
+    obj["name"] = "Alice";
+    obj["age"] = 28;
+    assert(!obj.isArray());
+    assert(obj.isObject());
+    assert(obj.has("name"));
+    assert(obj.has("age"));
+
+    // 3. Custom Tree<T> without petrify (direct byte dump)
+    Point2D pt{10, 20};
+    Tree<Point2D> t_pt(pt);
+    assert(t_pt.isObject());
+    assert(t_pt.has("typ"));
+    assert(t_pt.has("val"));
+    assert(t_pt["typ"].asString() == getMangledCppType<Point2D>());
+    assert(t_pt["val"].asString().length() == sizeof(Point2D));
+    assert((*t_pt).x == 10 && (*t_pt).y == 20);
+
+    // Custom Tree<T> with petrify method
+    PlayerState ps{"Hero", 100};
+    Tree<PlayerState> t_ps(ps);
+    assert(t_ps.isObject());
+    assert(t_ps.has("typ"));
+    assert(t_ps.has("val"));
+    assert(t_ps["val"].asString() == "Hero:100");
+    assert(t_ps->name == "Hero");
+    assert((*t_ps).health == 100);
+
+    // 4. stringifyJSON and stringifyYaml
+    String compactJson = stringifyJSON(obj, 0);
+    assert(!compactJson.contains("\n") && !compactJson.contains(" "));
+    assert(compactJson.contains("\"name\":\"Alice\""));
+    assert(compactJson.contains("\"age\":28"));
+
+    String prettyJson = stringifyJSON(obj, 2);
+    assert(prettyJson.contains("\n"));
+
+    String yamlOut = stringifyYaml(obj, 2);
+    assert(yamlOut.contains("name: Alice"));
+    assert(yamlOut.contains("age: 28"));
+
+    // 5. Unified parser with YAML anchors/aliases (go-tos) and comments
+    String yamlInput = 
+        "# Server Configuration\n"
+        "default_cfg: &default_cfg\n"
+        "  retries: 3\n"
+        "  timeout: 5000\n"
+        "\n"
+        "service_a:\n"
+        "  <<: *default_cfg\n"
+        "  host: \"srv1\"\n";
+
+    Tree<void> yamlTree;
+    bool yamlParsed = parseTree(yamlInput, yamlTree);
+    assert(yamlParsed);
+    assert(yamlTree["service_a"]["retries"].asInt() == 3);
+    assert(yamlTree["service_a"]["timeout"].asInt() == 5000);
+    assert(yamlTree["service_a"]["host"].asString() == "srv1");
+
+    // JSON with C-style comments (JSONC)
+    String jsoncInput = 
+        "// Main settings\n"
+        "{\n"
+        "  /* inline comment */\n"
+        "  \"title\": \"Antigravity\",\n"
+        "  \"count\": 7\n"
+        "}\n";
+
+    Tree<void> jsoncTree;
+    bool jsoncParsed = parseTree(jsoncInput, jsoncTree);
+    assert(jsoncParsed);
+    assert(jsoncTree["title"].asString() == "Antigravity");
+    assert(jsoncTree["count"].asInt() == 7);
+
+    // 6. Custom type parsing with parseTree<CustomTs...> and fallback to String
+    String customTypeJson = 
+        "{\n"
+        "  \"player\": {\n"
+        "    \"typ\": \"" + getMangledCppType<PlayerState>() + "\",\n"
+        "    \"val\": \"Knight:95\"\n"
+        "  },\n"
+        "  \"unregistered\": {\n"
+        "    \"typ\": \"UnregisteredCustomType\",\n"
+        "    \"val\": \"raw_unregistered_payload\"\n"
+        "  }\n"
+        "}";
+
+    Tree<void> customTree;
+    bool customParsed = parseTree<PlayerState>(customTypeJson, customTree);
+    assert(customParsed);
+
+    // Registered type PlayerState instantiated
+    Tree<void>* playerNode = customTree.get("player");
+    assert(playerNode != nullptr);
+    PlayerState restoredHero = playerNode->as<PlayerState>();
+    assert(restoredHero.name == "Knight");
+    assert(restoredHero.health == 95);
+
+    // Unregistered type falls back to String
+    Tree<void>* unregNode = customTree.get("unregistered");
+    assert(unregNode != nullptr);
+    assert(unregNode->asString() == "raw_unregistered_payload");
+
+    // 7. Petrified Tree: bitpacking and roundtrip fidelity
+    Tree<void> petrifyTarget;
+    petrifyTarget["id"] = 1001;
+    petrifyTarget["flag"] = true;
+    petrifyTarget["score"] = 99.5;
+    petrifyTarget["user"]["name"] = "Alice";
+    petrifyTarget["user"]["roles"].push("admin");
+    petrifyTarget["user"]["roles"].push("operator");
+
+    String petrifiedData = petrify(petrifyTarget);
+    assert(!petrifiedData.isEmpty());
+
+    Tree<void> hydratedTree;
+    bool hydOk = hydrate(petrifiedData, hydratedTree);
+    assert(hydOk);
+    assert(hydratedTree["id"].asInt() == 1001);
+    assert(hydratedTree["flag"].asBool() == true);
+    assert(hydratedTree["score"].as<f64>() > 99.4 && hydratedTree["score"].as<f64>() < 99.6);
+    assert(hydratedTree["user"]["name"].asString() == "Alice");
+    assert(hydratedTree["user"]["roles"].size() == 2);
+    assert(hydratedTree["user"]["roles"].at(0)->asString() == "admin");
+    assert(hydratedTree["user"]["roles"].at(1)->asString() == "operator");
+
+    // Verify bitpacking efficiency
+    String jsonRepr = stringifyJSON(petrifyTarget, 0);
+    // Petrified binary is significantly more compact than raw JSON
+    assert(petrifiedData.size() < jsonRepr.size());
+
+    printf("  PASS: Standard Trees, Custom Typs, YAML/JSON Parser, and Petrified Tree\n");
+}
+
 struct MockRequest {
     String response;
     bool write(const String &s) {
@@ -865,6 +1067,7 @@ int main() {
     test_eid_and_cb32();
     test_path();
     test_tree();
+    test_standard_trees_and_petrify();
     test_router();
     test_writ();
     test_crypto();

@@ -1,6 +1,6 @@
 /**
  * @file Yaml.hpp
- * @brief High-performance YAML and JSON parser and emitter for Ksee.
+ * @brief High-performance YAML and JSON parser and emitter for Ksee, built on Tree core.
  */
 
 #ifndef KSEE_FORMAT_YAML_HPP
@@ -15,7 +15,6 @@ namespace Ksee {
 class Yaml {
 public:
     static bool parse(const String &yamlString, Tree<void> &outRoot);
-
     static String toYAML(const Tree<void> &root, int indentation = 2);
     static String toJSON(const Tree<void> &root, int indentation = 4);
 };
@@ -39,4 +38,3 @@ inline String toJSON(const Tree<void> &tree, int indentation = 4) {
 } // namespace Ksee
 
 #endif // KSEE_FORMAT_YAML_HPP
-

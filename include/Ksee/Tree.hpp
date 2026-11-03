@@ -1,6 +1,7 @@
 /**
  * @file Tree.hpp
- * @brief Radix Trie tree data structure supporting Path indexing, pattern matching, and typed values.
+ * @brief Hierarchical Radix Trie tree data structure supporting native types, custom typed nodes,
+ *        flawless YAML/JSON parsing with comments and go-tos, and ultra-bitpacked petrification.
  */
 
 #ifndef KSEE_TREE_HPP
@@ -10,17 +11,167 @@
 #include "Array.hpp"
 #include "String.hpp"
 #include "Path.hpp"
+#include "Func.hpp"
 #include <type_traits>
+#include <typeinfo>
+#include <string.h>
 
 namespace Ksee {
 
+// -----------------------------------------------------------------------------
+// Comment Class (extends String)
+// -----------------------------------------------------------------------------
+
+class Comment : public String {
+public:
+    using String::String;
+    Comment() : String() {}
+    Comment(const String &s) : String(s) {}
+    Comment(String &&s) noexcept : String(std::move(s)) {}
+    Comment(const char *s) : String(s) {}
+    Comment& operator=(const String &s) { String::operator=(s); return *this; }
+    Comment& operator=(String &&s) noexcept { String::operator=(std::move(s)); return *this; }
+    Comment& operator=(const char *s) { String::operator=(s); return *this; }
+    bool operator==(const char *other) const { return String::operator==(other); }
+    bool operator==(const String &other) const { return String::operator==(other); }
+};
+
+// -----------------------------------------------------------------------------
+// Value Type Enum
+// -----------------------------------------------------------------------------
+
+enum class TreeValueType : u8 {
+    Void = 0,
+    Byte = 1,       // bool
+    U8 = 2,
+    I32 = 3,
+    U32 = 4,
+    I64 = 5,
+    U64 = 6,
+    F32 = 7,
+    F64 = 8,
+    String = 9,
+    Comment = 10,
+    Custom = 11
+};
+
+// Standard type detection traits
 template <typename T>
+struct is_standard_tree : std::false_type {};
+
+template <> struct is_standard_tree<u64> : std::true_type {};
+template <> struct is_standard_tree<unsigned long> : std::true_type {};
+template <> struct is_standard_tree<f64> : std::true_type {};
+template <> struct is_standard_tree<u32> : std::true_type {};
+template <> struct is_standard_tree<f32> : std::true_type {};
+template <> struct is_standard_tree<i32> : std::true_type {};
+template <> struct is_standard_tree<i64> : std::true_type {};
+template <> struct is_standard_tree<long> : std::true_type {};
+template <> struct is_standard_tree<u8> : std::true_type {};
+template <> struct is_standard_tree<bool> : std::true_type {};
+template <> struct is_standard_tree<String> : std::true_type {};
+template <> struct is_standard_tree<Comment> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_standard_tree_v = is_standard_tree<std::decay_t<T>>::value;
+
+// Custom petrify method detection
+template <typename U, typename = void>
+struct HasPetrify : std::false_type {};
+
+template <typename U>
+struct HasPetrify<U, std::void_t<decltype(std::declval<const U>().petrify())>> : std::true_type {};
+
+// Custom static type name detection
+template <typename U, typename = void>
+struct HasStaticTypMethod : std::false_type {};
+
+template <typename U>
+struct HasStaticTypMethod<U, std::void_t<decltype(U::typ())>> : std::true_type {};
+
+template <typename U, typename = void>
+struct HasStaticTypName : std::false_type {};
+
+template <typename U>
+struct HasStaticTypName<U, std::void_t<decltype(U::typName)>> : std::true_type {};
+
+template <typename U>
+inline String getMangledCppType() {
+    if constexpr (HasStaticTypMethod<U>::value) {
+        return String(U::typ());
+    } else if constexpr (HasStaticTypName<U>::value) {
+        return String(U::typName);
+    } else {
+        return String(typeid(U).name());
+    }
+}
+
+template <typename U>
+inline String serializeVal(const U &val) {
+    if constexpr (HasPetrify<U>::value) {
+        return val.petrify();
+    } else {
+        return String(reinterpret_cast<const u8*>(&val), sizeof(U));
+    }
+}
+
+// Custom static hydration / deserialization detection
+template <typename U, typename = void>
+struct HasStaticHydrate : std::false_type {};
+template <typename U>
+struct HasStaticHydrate<U, std::void_t<decltype(U::hydrate(std::declval<const String&>()))>> : std::true_type {};
+
+template <typename U, typename = void>
+struct HasStaticFromPetrified : std::false_type {};
+template <typename U>
+struct HasStaticFromPetrified<U, std::void_t<decltype(U::fromPetrified(std::declval<const String&>()))>> : std::true_type {};
+
+template <typename U, typename = void>
+struct HasStaticDeserialize : std::false_type {};
+template <typename U>
+struct HasStaticDeserialize<U, std::void_t<decltype(U::deserialize(std::declval<const String&>()))>> : std::true_type {};
+
+template <typename U, typename = void>
+struct HasStaticParse : std::false_type {};
+template <typename U>
+struct HasStaticParse<U, std::void_t<decltype(U::parse(std::declval<const String&>()))>> : std::true_type {};
+
+template <typename U>
+inline U instantiateFromVal(const String &val) {
+    if constexpr (HasStaticHydrate<U>::value) {
+        return U::hydrate(val);
+    } else if constexpr (HasStaticFromPetrified<U>::value) {
+        return U::fromPetrified(val);
+    } else if constexpr (HasStaticDeserialize<U>::value) {
+        return U::deserialize(val);
+    } else if constexpr (HasStaticParse<U>::value) {
+        return U::parse(val);
+    } else if constexpr (std::is_constructible_v<U, const String&>) {
+        return U(val);
+    } else {
+        U obj{};
+        usz copySize = sizeof(U) < val.length() ? sizeof(U) : val.length();
+        if (copySize > 0) {
+            memcpy(&obj, val.data(), copySize);
+        }
+        return obj;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Tree<void> Base Class
+// -----------------------------------------------------------------------------
+
+template <typename T = void>
 class Tree;
 
 class TreeProxy;
 
 template <>
 class Tree<void> {
+protected:
+    bool m_forceArray = false;
+
 public:
     Array<Tree<void>*> children;
     Tree<void>* parent = nullptr;
@@ -38,33 +189,29 @@ public:
     Tree<void>& operator=(const Tree<void> &other);
     Tree<void>& operator=(Tree<void> &&other) noexcept;
 
-    virtual bool isNull() const { return children.size() == 0; }
+    virtual bool isNull() const { return children.size() == 0 && !hasValue(); }
     virtual bool hasValue() const { return false; }
     virtual Tree<void>* clone() const;
 
-    virtual int valueType() const { return 0; }
+    virtual int valueType() const { return (int)TreeValueType::Void; }
     virtual String asString() const;
     virtual bool asBool() const;
     virtual f64 asNumber() const;
-
-    virtual String toString() const;
-    static Tree<void> parse(const String &val);
-    static Array<Tree<void>> parseMany(const String &data);
-
-    String toBinary() const;
-    bool readFromBinary(const u8 *data, usz length, usz &bytesRead);
-
-    static Tree<void>* fromString(const String &val);
-    static Tree<void>* fromNumber(f64 val);
-    static Tree<void>* fromBool(bool val);
+    virtual i64 asInt() const;
+    virtual u64 asUint() const;
 
     template <typename ValT>
     ValT as() const;
 
+    // Array / Object Native Handling
+    bool isArray() const;
+    bool isObject() const;
+    void setArray(bool isArr = true) { m_forceArray = isArr; }
+
     usz size() const { return children.size(); }
     void clear();
 
-    // Radix Tree API
+    // Radix Tree Indexing & Query API
     Array<Tree<void>*> queryAll(const Path &target, bool strict = true) const;
     Array<Tree<void>*> queryAll(const String &target, bool strict = true) const;
     Array<Tree<void>*> queryAll(const char *target, bool strict = true) const;
@@ -81,13 +228,7 @@ public:
     Tree<void>* first(const String &target) const { return get(target); }
     Tree<void>* first(const char *target) const { return get(target); }
 
-    Tree<void>* addChild(Tree<void>* c) {
-        if (c) {
-            c->parent = this;
-            children.push(c);
-        }
-        return c;
-    }
+    Tree<void>* addChild(Tree<void>* c);
 
     template <typename ValT>
     Tree<ValT>* addChild(Tree<ValT>* c) {
@@ -106,9 +247,15 @@ public:
     bool deleteKey(const String &target);
     bool deleteKey(const char *target);
 
+    Path generate(const Path &target = Path()) const;
+    Path generate(const String &target) const { return generate(Path(target)); }
+    Path generate(const char *target) const { return generate(Path(target)); }
+
     Tree<void>* push(const Path &target);
-    Tree<void>* push(const String &target);
-    Tree<void>* push(const char *target);
+    Tree<void>* push(Tree<void>* child);
+
+    template <typename ValT>
+    auto push(const ValT &val);
 
     template <typename ValT>
     Tree<ValT>* push(const Path &target, const ValT &val);
@@ -130,27 +277,179 @@ public:
     Tree<void>* operator[](usz idx) const {
         return (idx < children.size()) ? children[idx] : nullptr;
     }
+
+    // Serialization & Parsing
+    String toString() const;
+    String toBinary() const;
+    bool readFromBinary(const u8 *data, usz length, usz &bytesRead);
+
+    static Tree<void> parse(const String &val);
+    static Array<Tree<void>> parseMany(const String &data);
+
+    static Tree<void>* fromString(const String &val);
+    static Tree<void>* fromNumber(f64 val);
+    static Tree<void>* fromBool(bool val);
 };
+
+using TreeRoot = Tree<void>;
+
+// -----------------------------------------------------------------------------
+// Typed Tree<T> Implementation
+// -----------------------------------------------------------------------------
 
 template <typename T>
 class Tree : public Tree<void> {
 public:
     T value;
 
-    Tree() : Tree<void>(), value() {}
-    explicit Tree(const T &val) : Tree<void>(), value(val) {}
-    Tree(const Path &p, const T &val) : Tree<void>(p), value(val) {}
-    Tree(const String &p, const T &val) : Tree<void>(p), value(val) {}
-    Tree(const char *p, const T &val) : Tree<void>(p), value(val) {}
+    void updateCustomChildren() {
+        if constexpr (!is_standard_tree_v<T>) {
+            deleteKey("typ");
+            deleteKey("val");
+            addChild(new Tree<String>("typ", getMangledCppType<T>()));
+            addChild(new Tree<String>("val", serializeVal<T>(value)));
+        }
+    }
+
+    Tree() : Tree<void>(), value() {
+        updateCustomChildren();
+    }
+
+    explicit Tree(const T &val) : Tree<void>(), value(val) {
+        updateCustomChildren();
+    }
+
+    Tree(const Path &p, const T &val) : Tree<void>(p), value(val) {
+        updateCustomChildren();
+    }
+
+    Tree(const String &p, const T &val) : Tree<void>(p), value(val) {
+        updateCustomChildren();
+    }
+
+    Tree(const char *p, const T &val) : Tree<void>(p), value(val) {
+        updateCustomChildren();
+    }
+
+    Tree(const Tree<T> &other) : Tree<void>(other), value(other.value) {
+        if constexpr (!is_standard_tree_v<T>) {
+            updateCustomChildren();
+        }
+    }
+
+    Tree(Tree<T> &&other) noexcept : Tree<void>(std::move(other)), value(std::move(other.value)) {
+        if constexpr (!is_standard_tree_v<T>) {
+            updateCustomChildren();
+        }
+    }
+
+    Tree<T>& operator=(const Tree<T> &other) {
+        if (this != &other) {
+            Tree<void>::operator=(other);
+            value = other.value;
+            if constexpr (!is_standard_tree_v<T>) {
+                updateCustomChildren();
+            }
+        }
+        return *this;
+    }
+
+    Tree<T>& operator=(Tree<T> &&other) noexcept {
+        if (this != &other) {
+            Tree<void>::operator=(std::move(other));
+            value = std::move(other.value);
+            if constexpr (!is_standard_tree_v<T>) {
+                updateCustomChildren();
+            }
+        }
+        return *this;
+    }
+
+    Tree<T>& operator=(const T &val) {
+        value = val;
+        if constexpr (!is_standard_tree_v<T>) {
+            updateCustomChildren();
+        }
+        return *this;
+    }
 
     bool isNull() const override { return false; }
     bool hasValue() const override { return true; }
 
     int valueType() const override {
-        if constexpr (std::is_same_v<T, String>) return 3;
-        if constexpr (std::is_same_v<T, bool>) return 4;
-        if constexpr (std::is_arithmetic_v<T>) return 2;
-        return 1;
+        using D = std::decay_t<T>;
+        if constexpr (std::is_same_v<D, bool>) return (int)TreeValueType::Byte;
+        else if constexpr (std::is_same_v<D, u8>) return (int)TreeValueType::U8;
+        else if constexpr (std::is_same_v<D, i32>) return (int)TreeValueType::I32;
+        else if constexpr (std::is_same_v<D, u32>) return (int)TreeValueType::U32;
+        else if constexpr (std::is_same_v<D, i64> || std::is_same_v<D, long>) return (int)TreeValueType::I64;
+        else if constexpr (std::is_same_v<D, u64> || std::is_same_v<D, unsigned long>) return (int)TreeValueType::U64;
+        else if constexpr (std::is_same_v<D, f32>) return (int)TreeValueType::F32;
+        else if constexpr (std::is_same_v<D, f64>) return (int)TreeValueType::F64;
+        else if constexpr (std::is_same_v<D, Comment>) return (int)TreeValueType::Comment;
+        else if constexpr (std::is_same_v<D, String>) return (int)TreeValueType::String;
+        else return (int)TreeValueType::Custom;
+    }
+
+    String asString() const override {
+        if constexpr (std::is_same_v<T, String> || std::is_same_v<T, Comment>) {
+            return value;
+        } else if constexpr (std::is_same_v<T, bool>) {
+            return value ? "true" : "false";
+        } else if constexpr (std::is_integral_v<T>) {
+            if constexpr (std::is_signed_v<T>) return String((long long)value);
+            else return String((u64)value);
+        } else if constexpr (std::is_floating_point_v<T>) {
+            return String((f64)value);
+        } else {
+            return serializeVal<T>(value);
+        }
+    }
+
+    bool asBool() const override {
+        if constexpr (std::is_same_v<T, bool>) {
+            return value;
+        } else if constexpr (std::is_arithmetic_v<T>) {
+            return value != 0;
+        } else if constexpr (std::is_same_v<T, String>) {
+            return value == "true" || value == "1";
+        } else {
+            return false;
+        }
+    }
+
+    f64 asNumber() const override {
+        if constexpr (std::is_arithmetic_v<T>) {
+            return static_cast<f64>(value);
+        } else if constexpr (std::is_same_v<T, String>) {
+            return value.toDouble();
+        } else {
+            return 0.0;
+        }
+    }
+
+    i64 asInt() const override {
+        if constexpr (std::is_integral_v<T>) {
+            return static_cast<i64>(value);
+        } else if constexpr (std::is_floating_point_v<T>) {
+            return static_cast<i64>(value);
+        } else if constexpr (std::is_same_v<T, String>) {
+            return value.toInt();
+        } else {
+            return 0;
+        }
+    }
+
+    u64 asUint() const override {
+        if constexpr (std::is_integral_v<T>) {
+            return static_cast<u64>(value);
+        } else if constexpr (std::is_floating_point_v<T>) {
+            return static_cast<u64>(value);
+        } else if constexpr (std::is_same_v<T, String>) {
+            return static_cast<u64>(value.toInt());
+        } else {
+            return 0;
+        }
     }
 
     T& operator*() { return value; }
@@ -162,6 +461,11 @@ public:
     Tree<void>* clone() const override {
         Tree<T>* n = new Tree<T>(path, value);
         for (usz i = 0; i < children.size(); ++i) {
+            if constexpr (!is_standard_tree_v<T>) {
+                if (children[i]->path.toString() == "typ" || children[i]->path.toString() == "val") {
+                    continue;
+                }
+            }
             Tree<void>* c = children[i]->clone();
             c->parent = n;
             n->children.push(c);
@@ -169,6 +473,10 @@ public:
         return n;
     }
 };
+
+// -----------------------------------------------------------------------------
+// Template implementations for Tree<void>
+// -----------------------------------------------------------------------------
 
 template <typename ValT>
 Tree<ValT>* Tree<void>::push(const Path &target, const ValT &val) {
@@ -180,45 +488,110 @@ Tree<ValT>* Tree<void>::push(const Path &target, const ValT &val) {
 }
 
 template <typename ValT>
-ValT Tree<void>::as() const {
-    if constexpr (std::is_same_v<ValT, String>) {
-        if (auto* s = dynamic_cast<const Tree<String>*>(this)) return s->value;
-        if (auto* b = dynamic_cast<const Tree<bool>*>(this)) return b->value ? "true" : "false";
-        if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return String(f->value);
-        if (auto* l = dynamic_cast<const Tree<long long>*>(this)) return String(l->value);
-        return String();
-    } else if constexpr (std::is_same_v<ValT, bool>) {
-        if (auto* b = dynamic_cast<const Tree<bool>*>(this)) return b->value;
-        if (auto* l = dynamic_cast<const Tree<long long>*>(this)) return l->value != 0;
-        if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return f->value != 0.0;
-        if (auto* s = dynamic_cast<const Tree<String>*>(this)) return s->value == "true" || s->value == "1";
-        return false;
-    } else if constexpr (std::is_floating_point_v<ValT>) {
-        if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return static_cast<ValT>(f->value);
-        if (auto* f3 = dynamic_cast<const Tree<f32>*>(this)) return static_cast<ValT>(f3->value);
-        if (auto* l = dynamic_cast<const Tree<long long>*>(this)) return static_cast<ValT>(l->value);
-        if (auto* i = dynamic_cast<const Tree<int>*>(this)) return static_cast<ValT>(i->value);
-        if (auto* u = dynamic_cast<const Tree<u64>*>(this)) return static_cast<ValT>(u->value);
-        if (auto* u3 = dynamic_cast<const Tree<u32>*>(this)) return static_cast<ValT>(u3->value);
-        if (auto* s = dynamic_cast<const Tree<String>*>(this)) return static_cast<ValT>(s->value.toDouble());
-        return static_cast<ValT>(0);
-    } else if constexpr (std::is_integral_v<ValT>) {
-        if (auto* l = dynamic_cast<const Tree<long long>*>(this)) return static_cast<ValT>(l->value);
-        if (auto* i = dynamic_cast<const Tree<int>*>(this)) return static_cast<ValT>(i->value);
-        if (auto* u = dynamic_cast<const Tree<u64>*>(this)) return static_cast<ValT>(u->value);
-        if (auto* u3 = dynamic_cast<const Tree<u32>*>(this)) return static_cast<ValT>(u3->value);
-        if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return static_cast<ValT>(f->value);
-        if (auto* s = dynamic_cast<const Tree<String>*>(this)) return static_cast<ValT>(s->value.toLong());
-        return static_cast<ValT>(0);
+auto Tree<void>::push(const ValT &val) {
+    using D = std::decay_t<ValT>;
+    m_forceArray = true;
+    if constexpr (std::is_same_v<D, const char*> || std::is_same_v<D, char*> || std::is_array_v<ValT>) {
+        Tree<String>* node = new Tree<String>(String(val));
+        node->parent = this;
+        children.push(node);
+        return node;
     } else {
-        if (auto* t = dynamic_cast<const Tree<ValT>*>(this)) return t->value;
-        return ValT();
-}
+        Tree<ValT>* node = new Tree<ValT>(val);
+        node->parent = this;
+        children.push(node);
+        return node;
+    }
 }
 
-inline String Tree<void>::asString() const { return as<String>(); }
-inline bool Tree<void>::asBool() const { return as<bool>(); }
-inline f64 Tree<void>::asNumber() const { return as<f64>(); }
+template <typename ValT>
+ValT Tree<void>::as() const {
+    using D = std::decay_t<ValT>;
+    if constexpr (std::is_same_v<D, String>) {
+        return asString();
+    } else if constexpr (std::is_same_v<D, Comment>) {
+        return Comment(asString());
+    } else if constexpr (std::is_same_v<D, bool>) {
+        return asBool();
+    } else if constexpr (std::is_floating_point_v<D>) {
+        return static_cast<ValT>(asNumber());
+    } else if constexpr (std::is_integral_v<D>) {
+        if constexpr (std::is_signed_v<D>) {
+            return static_cast<ValT>(asInt());
+        } else {
+            return static_cast<ValT>(asUint());
+        }
+    } else {
+        if (auto* t = dynamic_cast<const Tree<ValT>*>(this)) {
+            return t->value;
+        }
+        if (has("val")) {
+            return instantiateFromVal<ValT>(get("val")->asString());
+        }
+        return ValT{};
+    }
+}
+
+inline String Tree<void>::asString() const {
+    if (auto* s = dynamic_cast<const Tree<String>*>(this)) return s->value;
+    if (auto* c = dynamic_cast<const Tree<Comment>*>(this)) return c->value;
+    if (auto* b = dynamic_cast<const Tree<bool>*>(this)) return b->value ? "true" : "false";
+    if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return String(f->value);
+    if (auto* f3 = dynamic_cast<const Tree<f32>*>(this)) return String(f3->value);
+    if (auto* u = dynamic_cast<const Tree<u64>*>(this)) return String(u->value);
+    if (auto* u3 = dynamic_cast<const Tree<u32>*>(this)) return String((u64)u3->value);
+    if (auto* u8n = dynamic_cast<const Tree<u8>*>(this)) return String((u64)u8n->value);
+    if (auto* l = dynamic_cast<const Tree<i64>*>(this)) return String(l->value);
+    if (auto* in = dynamic_cast<const Tree<i32>*>(this)) return String(in->value);
+    if (has("val")) return get("val")->asString();
+    return String();
+}
+
+inline bool Tree<void>::asBool() const {
+    if (auto* b = dynamic_cast<const Tree<bool>*>(this)) return b->value;
+    if (auto* l = dynamic_cast<const Tree<i64>*>(this)) return l->value != 0;
+    if (auto* in = dynamic_cast<const Tree<i32>*>(this)) return in->value != 0;
+    if (auto* u = dynamic_cast<const Tree<u64>*>(this)) return u->value != 0;
+    if (auto* u3 = dynamic_cast<const Tree<u32>*>(this)) return u3->value != 0;
+    if (auto* u8n = dynamic_cast<const Tree<u8>*>(this)) return u8n->value != 0;
+    if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return f->value != 0.0;
+    if (auto* s = dynamic_cast<const Tree<String>*>(this)) return s->value == "true" || s->value == "1";
+    return false;
+}
+
+inline f64 Tree<void>::asNumber() const {
+    if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return f->value;
+    if (auto* f3 = dynamic_cast<const Tree<f32>*>(this)) return static_cast<f64>(f3->value);
+    if (auto* l = dynamic_cast<const Tree<i64>*>(this)) return static_cast<f64>(l->value);
+    if (auto* in = dynamic_cast<const Tree<i32>*>(this)) return static_cast<f64>(in->value);
+    if (auto* u = dynamic_cast<const Tree<u64>*>(this)) return static_cast<f64>(u->value);
+    if (auto* u3 = dynamic_cast<const Tree<u32>*>(this)) return static_cast<f64>(u3->value);
+    if (auto* u8n = dynamic_cast<const Tree<u8>*>(this)) return static_cast<f64>(u8n->value);
+    if (auto* s = dynamic_cast<const Tree<String>*>(this)) return s->value.toDouble();
+    return 0.0;
+}
+
+inline i64 Tree<void>::asInt() const {
+    if (auto* l = dynamic_cast<const Tree<i64>*>(this)) return l->value;
+    if (auto* in = dynamic_cast<const Tree<i32>*>(this)) return in->value;
+    if (auto* u = dynamic_cast<const Tree<u64>*>(this)) return static_cast<i64>(u->value);
+    if (auto* u3 = dynamic_cast<const Tree<u32>*>(this)) return static_cast<i64>(u3->value);
+    if (auto* u8n = dynamic_cast<const Tree<u8>*>(this)) return static_cast<i64>(u8n->value);
+    if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return static_cast<i64>(f->value);
+    if (auto* s = dynamic_cast<const Tree<String>*>(this)) return s->value.toInt();
+    return 0;
+}
+
+inline u64 Tree<void>::asUint() const {
+    if (auto* u = dynamic_cast<const Tree<u64>*>(this)) return u->value;
+    if (auto* u3 = dynamic_cast<const Tree<u32>*>(this)) return u3->value;
+    if (auto* u8n = dynamic_cast<const Tree<u8>*>(this)) return u8n->value;
+    if (auto* l = dynamic_cast<const Tree<i64>*>(this)) return static_cast<u64>(l->value);
+    if (auto* in = dynamic_cast<const Tree<i32>*>(this)) return static_cast<u64>(in->value);
+    if (auto* f = dynamic_cast<const Tree<f64>*>(this)) return static_cast<u64>(f->value);
+    if (auto* s = dynamic_cast<const Tree<String>*>(this)) return static_cast<u64>(s->value.toInt());
+    return 0;
+}
 
 inline Tree<void>* Tree<void>::fromString(const String &val) { return new Tree<String>(val); }
 inline Tree<void>* Tree<void>::fromNumber(f64 val) { return new Tree<f64>(val); }
@@ -241,6 +614,10 @@ Tree(const String &, const T &) -> Tree<T>;
 
 template <typename T>
 Tree(const char *, const T &) -> Tree<T>;
+
+// -----------------------------------------------------------------------------
+// TreeProxy for chained assignment and access
+// -----------------------------------------------------------------------------
 
 class TreeProxy {
 private:
@@ -273,6 +650,22 @@ public:
     String asString() const { return as<String>(); }
     bool asBool() const { return as<bool>(); }
     f64 asNumber() const { return as<f64>(); }
+    i64 asInt() const { Tree<void>* n = node(); return n ? n->asInt() : 0; }
+    u64 asUint() const { Tree<void>* n = node(); return n ? n->asUint() : 0; }
+    usz size() const { Tree<void>* n = node(); return n ? n->size() : 0; }
+
+    template <typename ValT>
+    auto push(const ValT &val) {
+        Tree<void>* n = node();
+        if (!n) n = _parent->push(_path);
+        return n->push(val);
+    }
+
+    Tree<void>* push(Tree<void>* child) {
+        Tree<void>* n = node();
+        if (!n) n = _parent->push(_path);
+        return n->push(child);
+    }
 
     Tree<void>* operator->() const {
         return node();
@@ -300,6 +693,16 @@ public:
             return c;
         }
         return nullptr;
+    }
+
+    Tree<void>* at(usz idx) const {
+        Tree<void>* n = node();
+        return (n && idx < n->children.size()) ? n->children[idx] : nullptr;
+    }
+
+    Tree<void>* operator[](usz idx) const {
+        Tree<void>* n = node();
+        return (n && idx < n->children.size()) ? n->children[idx] : nullptr;
     }
 
     TreeProxy operator[](const Path &target) {
@@ -331,7 +734,45 @@ inline TreeProxy Tree<void>::operator[](const char *target) {
     return TreeProxy(this, Path(target));
 }
 
+// -----------------------------------------------------------------------------
+// Core Functional API: Stringify, Parse, Petrify, Hydrate
+// -----------------------------------------------------------------------------
+
+struct Typ {
+    String name;
+    Func<Tree<void>*(const String &val)> instantiate;
+};
+using TypHandlers = Typ;
+
+String stringifyJSON(const Tree<void> &tree, u32 identation = 0);
+String stringifyYaml(const Tree<void> &tree, u32 identation = 2);
+
+bool parseTreeWithTyps(const Array<Typ> &th, const String &string, Tree<void> &tree);
+
+template <typename T>
+struct TypeTag { using type = T; };
+
+template <typename... CustomTs>
+inline bool parseTree(const String &string, Tree<void> &tree) {
+    Array<Typ> th;
+    if constexpr (sizeof...(CustomTs) > 0) {
+        auto registerTyp = [&th](auto tag) {
+            using T = typename decltype(tag)::type;
+            Typ t;
+            t.name = getMangledCppType<T>();
+            t.instantiate = [](const String &val) -> Tree<void>* {
+                return new Tree<T>(instantiateFromVal<T>(val));
+            };
+            th.push(t);
+        };
+        (registerTyp(TypeTag<CustomTs>{}), ...);
+    }
+    return parseTreeWithTyps(th, string, tree);
+}
+
+String petrify(const Tree<void> &tree);
+bool hydrate(const String &petrified, Tree<void> &tree);
+
 } // namespace Ksee
 
 #endif // KSEE_TREE_HPP
-
