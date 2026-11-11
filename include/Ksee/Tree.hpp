@@ -769,18 +769,6 @@ inline bool parseYaml(const String &string, Tree<void> &tree) {
     return parseYamlWithTyps(th, string, tree);
 }
 
-template <typename... CustomTs>
-inline bool parseJSON(const String &string, Tree<void> &tree) {
-    return parseYaml<CustomTs...>(string, tree);
-}
-
-inline String toJSON(const Tree<void> &tree, u32 indentation = 0) {
-    return stringifyJSON(tree, indentation);
-}
-
-inline String toYAML(const Tree<void> &tree, u32 indentation = 2) {
-    return stringifyYaml(tree, indentation);
-}
 
 String petrify(const Tree<void> &tree);
 bool hydrate(const String &petrified, Tree<void> &tree);

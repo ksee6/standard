@@ -202,7 +202,7 @@ Tree<void> JWT::open(const String &token, const String &key) {
         return invalid;
     }
     Tree<void> headerTree;
-    if (!parseJSON(headerJson, headerTree)) {
+    if (!parseYaml(headerJson, headerTree)) {
         return invalid;
     }
     Tree<void> *algNode = headerTree.get("alg");
@@ -224,7 +224,7 @@ Tree<void> JWT::open(const String &token, const String &key) {
     }
 
     Tree<void> result;
-    if (!parseJSON(payloadJson, result)) {
+    if (!parseYaml(payloadJson, result)) {
         return invalid;
     }
 
