@@ -26,8 +26,7 @@ String Link(const String &text, const String &url) {
 String Table(const Array<String> &arr) {
   usz cols = 1;
   Array<usz> colWidths;
-  colWidths.allocate(cols);
-  colWidths[0] = 0;
+  colWidths.push(0);
 
   usz rows = arr.size();
   for (usz r = 0; r < rows; ++r) {

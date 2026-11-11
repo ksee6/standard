@@ -5,6 +5,7 @@
 
 #include "../../include/Ksee/ID.hpp"
 #include "../../include/Ksee/Time.hpp"
+#include "../../include/Ksee/Base32.hpp"
 #include <stdio.h>
 
 namespace Ksee {

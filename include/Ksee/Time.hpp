@@ -8,18 +8,9 @@
 #define KSEE_TIME_HPP
 
 #include "String.hpp"
-#include "Types.hpp"
+#include "Ksee.hpp"
 
 namespace Ksee {
-
-/** @brief Returns current system time in microseconds since Unix epoch. */
-
-i64 epochMicros();
-u64 epochMillis();
-i64 epochSeconds();
-
-/** @brief Returns global GMT offset in seconds. */
-int getGMT();
 
 /**
  * @class Time
@@ -35,13 +26,6 @@ private:
   static constexpr i64 US_PER_HOUR = 3600000000ULL;
   static constexpr i64 US_PER_DAY = 86400000000ULL;
 
-  friend 
-i64 epochMicros();
-u64 epochMillis();
-i64 epochSeconds();
-
-  friend int getGMT();
-
 public:
   int tz = 0; ///< Timezone offset in seconds.
   i64 us;     ///< Microseconds since Unix epoch.
@@ -54,15 +38,12 @@ public:
   static void civFromDays(long long z, int &y, int &m, int &d, int &doy);
   static long long daysFromCiv(int y, int m, int d);
 
-  /** @brief Synchronizes the global clock with a specific value. */
-  static void syncClock(i64 now);
-  /** @brief Synchronizes the global clock with system time. */
-  static void syncClock();
-
-  /** @brief Default constructor (uninitialized or zero). */
-  Time() : us(0), tz(0) {}
-  /** @brief Constructs from raw microseconds and optional timezone. */
-  Time(i64 u, int t = 0) : us(u), tz(t) {}
+  /** @brief Constructs with global epochTime and gmt. */
+  Time();
+  /** @brief Constructs with specified time and global gmt. */
+  explicit Time(u64 t);
+  /** @brief Constructs from raw microseconds and explicit timezone. */
+  Time(i64 u, int t);
   /** @brief Parses a date string based on a format. */
   Time(const String &date, const String &fmt);
 

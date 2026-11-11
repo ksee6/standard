@@ -6,7 +6,7 @@
 #ifndef KSEE_TERMINAL_BOX_HPP
 #define KSEE_TERMINAL_BOX_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "../String.hpp"
 #include "../Array.hpp"
 

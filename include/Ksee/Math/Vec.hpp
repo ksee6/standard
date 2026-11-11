@@ -6,7 +6,7 @@
 #ifndef KSEE_MATH_VEC_HPP
 #define KSEE_MATH_VEC_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "Trig.hpp"
 
 namespace Ksee {

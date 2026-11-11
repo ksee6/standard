@@ -6,7 +6,7 @@
 #ifndef KSEE_ID_HPP
 #define KSEE_ID_HPP
 
-#include "Types.hpp"
+#include "Ksee.hpp"
 #include "String.hpp"
 
 namespace Ksee {

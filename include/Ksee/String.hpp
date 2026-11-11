@@ -8,8 +8,6 @@
 
 #include "Array.hpp"
 
-using namespace Ksee;
-
 namespace Data {
 class Regex;
 }
@@ -107,6 +105,7 @@ public:
   String() : Array<u8>() {}
   String(const char *s);
   String(const u8 *buffer, usz l);
+  String(const char *buffer, usz l) : String(reinterpret_cast<const u8*>(buffer), l) {}
   String(const String &o) : Array<u8>(o) {}
   String(String &&o) noexcept : Array<u8>(Ksee::Move(o)) {}
   String(const Array<u8> &o) : Array<u8>(o) {}

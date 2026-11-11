@@ -6,7 +6,7 @@
 #ifndef KSEE_ITERATOR_HPP
 #define KSEE_ITERATOR_HPP
 
-#include "Types.hpp"
+#include "Ksee.hpp"
 #include "Func.hpp"
 #include "Array.hpp"
 

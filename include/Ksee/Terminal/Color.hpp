@@ -6,7 +6,7 @@
 #ifndef KSEE_TERMINAL_COLOR_HPP
 #define KSEE_TERMINAL_COLOR_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "../String.hpp"
 
 namespace Ksee {

@@ -154,7 +154,7 @@ Array<usz> multiSelect(const String &question, const Array<String> &options) {
   Array<bool> selected_mask;
   selected_mask.allocate(options.size());
   for (usz i = 0; i < options.size(); i++)
-    selected_mask[i] = false;
+    selected_mask.push(false);
 
   usz cursor = 0;
   {

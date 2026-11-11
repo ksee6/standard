@@ -6,7 +6,7 @@
 #ifndef KSEE_MATH_QUATERNION_HPP
 #define KSEE_MATH_QUATERNION_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "Trig.hpp"
 #include "Vec.hpp"
 #include "Matrix.hpp"

@@ -24,8 +24,6 @@
 
 namespace Ksee {
 
-i64 systemStartMicros = 0;
-
 static inline bool ch_eq(char a, char b) {
   return (a == b) || (a >= 'a' && a <= 'z' && a - 32 == b) || (a >= 'A' && a <= 'Z' && a + 32 == b);
 }
@@ -43,16 +41,30 @@ static inline int parse_int(const char *&str, int len) {
   return val;
 }
 
-i64 epochMicros() { return systemStartMicros + micros(); }
-
-i64 epochSeconds() { return epochMicros() / 1000000; }
-
-
-int getGMT() {
-  return 0;
+Time::Time() {
+  if (!isEpochTimeSet) {
+    autoSetEpochTime();
+  }
+  tz = gmt;
+  u64 t = epochTime();
+  us = (i64)t * 1000ULL + (micros() % 1000ULL);
 }
 
-void Time::syncClock(i64 now) { Ksee::systemStartMicros = now - Ksee::micros(); }
+Time::Time(u64 t) {
+  if (!isEpochTimeSet) {
+    autoSetEpochTime();
+  }
+  tz = gmt;
+  if (t < 10000000000ULL) {
+    us = (i64)t * 1000000ULL;
+  } else if (t < 100000000000000ULL) {
+    us = (i64)t * 1000ULL;
+  } else {
+    us = (i64)t;
+  }
+}
+
+Time::Time(i64 u, int t) : tz(t), us(u) {}
 
 void Time::civFromDays(long long z, int &y, int &m, int &d, int &doy) {
   z += 719468;
@@ -74,39 +86,6 @@ long long Time::daysFromCiv(int y, int m, int d) {
   const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
   const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return era * 146097 + static_cast<long long>(doe) - 719468;
-}
-
-void Time::syncClock() {
-#if defined(__KERNEL__)
-  syncClock(ktime_get_real_ns() / 1000ULL);
-#elif defined(_WIN32)
-  unsigned long long ft;
-  ::GetSystemTimePreciseAsFileTime(&ft);
-  syncClock((ft - 116444736000000000ULL) / 10ULL);
-#elif defined(KSEE_NO_STD) && defined(__linux__)
-  #if defined(__x86_64__)
-    struct {
-      long long tv_sec;
-      long long tv_nsec;
-    } ts;
-    long ret;
-    __asm__ volatile (
-      "syscall"
-      : "=a"(ret)
-      : "a"(228), "D"(0), "S"(&ts)
-      : "rcx", "r11", "memory"
-    );
-    if (ret == 0) {
-      syncClock((i64)ts.tv_sec * 1000000ULL + (i64)(ts.tv_nsec / 1000));
-    }
-  #endif
-#elif defined(ARDUINO)
-  syncClock(0);
-#else
-  struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
-  syncClock((i64)ts.tv_sec * 1000000ULL + (i64)(ts.tv_nsec / 1000));
-#endif
 }
 
 int Time::daysInMonth(int m, int y) {
@@ -183,12 +162,13 @@ void Time::updateDate(int y, int m, int d) {
   us = daysFromCiv(y, m, d) * US_PER_DAY + (us % US_PER_DAY);
 }
 
-Time::Time(const String &date, const String &fmt) : us(0) {
+Time::Time(const String &date, const String &fmt) : tz(gmt), us(0) {
   const char *s = date.c_str();
   const char *f = fmt.c_str();
   int Y = 1970, M = 1, D = 1, h = 0, mn = 0, sc = 0;
   bool isPM = false;
   int tzH = 0, tzM = 0;
+  bool tzParsed = false;
   while (*f) {
     if (*f == 'y' && *(f + 1) == 'y' && *(f + 2) == 'y' && *(f + 3) == 'y') {
       Y = parse_int(s, 4);
@@ -234,6 +214,7 @@ Time::Time(const String &date, const String &fmt) : us(0) {
         tzM = parse_int(s, 2);
       tzH *= sign;
       tzM *= sign;
+      tzParsed = true;
       f += 2;
     } else {
       if (*s == *f)
@@ -241,12 +222,15 @@ Time::Time(const String &date, const String &fmt) : us(0) {
       f++;
     }
   }
+  if (tzParsed) {
+    tz = tzH * 3600 + tzM * 60;
+  }
   if (isPM && h < 12)
     h += 12;
   if (!isPM && h == 12)
     h = 0;
   us = (daysFromCiv(Y, M, D) * 86400LL + h * 3600LL + mn * 60LL + sc -
-        (tzH * 3600LL + tzM * 60LL)) *
+        (tzParsed ? (tzH * 3600LL + tzM * 60LL) : (long long)tz)) *
        US_PER_SEC;
 }
 

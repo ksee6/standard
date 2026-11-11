@@ -85,6 +85,11 @@ private:
       newCap = MIN_CAPACITY;
     free_buckets();
     buckets.allocate(newCap);
+    for (usz i = 0; i < newCap; ++i)
+      new (&buckets._data[i]) MapEntry<K, V>();
+    buckets._length = newCap;
+    if (buckets.block)
+      buckets.block->_length = newCap;
     capacity = newCap;
     mask = newCap - 1;
     threshold = (newCap * 85) / 100;
@@ -152,10 +157,9 @@ public:
   Map() : count(0), capacity(0), mask(0), threshold(0) {}
 
   Map(const Map &other)
-      : count(other.count), capacity(other.capacity), mask(other.mask),
-        threshold(other.threshold) {
+      : count(0), capacity(0), mask(0), threshold(0) {
     if (other.capacity > 0) {
-      buckets.allocate(other.capacity);
+      allocate_buckets(other.capacity);
       for (usz i = 0; i < other.capacity; ++i) {
         if (!other.buckets[i].isEmpty()) {
           buckets[i] = MapEntry<K, V>(K(other.buckets[i].key),
@@ -163,6 +167,7 @@ public:
                                       other.buckets[i].fnvHash);
         }
       }
+      count = other.count;
     }
   }
 
@@ -197,12 +202,8 @@ public:
   Map &operator=(const Map &other) {
     if (this != &other) {
       free_buckets();
-      count = other.count;
-      capacity = other.capacity;
-      mask = other.mask;
-      threshold = other.threshold;
       if (other.capacity > 0) {
-        buckets.allocate(other.capacity);
+        allocate_buckets(other.capacity);
         for (usz i = 0; i < other.capacity; ++i) {
           if (!other.buckets[i].isEmpty()) {
             buckets[i] = MapEntry<K, V>(K(other.buckets[i].key),
@@ -210,6 +211,7 @@ public:
                                         other.buckets[i].fnvHash);
           }
         }
+        count = other.count;
       }
     }
     return *this;

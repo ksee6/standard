@@ -6,7 +6,7 @@
 #ifndef KSEE_MATH_STATS_HPP
 #define KSEE_MATH_STATS_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "../Array.hpp"
 
 namespace Ksee {

@@ -1,86 +1,72 @@
 /**
  * @file Path.hpp
- * @brief Unified compact Path representation for Ksee.
- * Handles Root paths, Tagged paths, URLs, IPv4, IPv6, domain names, and pattern matching.
+ * @brief Pure hierarchical Path extending directly and only Array<String>.
  */
 
 #ifndef KSEE_PATH_HPP
 #define KSEE_PATH_HPP
 
-#include "Types.hpp"
+#include "Ksee.hpp"
 #include "Array.hpp"
 #include "String.hpp"
 
 namespace Ksee {
 
-class Path {
+class Path : public Array<String> {
 public:
-    Array<String> parts;
-    u8 mode = 0; // 0 = Relative, 1 = Root, 2 = Tagged, 3 = Url, 4 = Ipv4, 5 = Ipv6
+    // Inherit constructors from Array<String>
+    using Array<String>::Array;
 
     // Constructors
     Path();
-    Path(const String &path);
-    Path(const char *path);
-    Path(const Array<String> &pathParts);
-    Path(const Array<u32> &pathParts);
+    Path(const Path &other) = default;
+    Path(Path &&other) noexcept = default;
+    Path(const String &str);
+    Path(const char *str);
+    Path(const Array<String> &other);
+    Path(Array<String> &&other) noexcept;
+    Path(const Array<u32> &parts);
+#if defined(KSEE_HAS_STD_INITIALIZER_LIST)
+    Path(std::initializer_list<String> list);
+    Path(std::initializer_list<const char*> list);
+#endif
 
-    // Indexed access
-    String operator[](usz idx) const;
-    usz size() const { return parts.size(); }
-    bool isEmpty() const { return parts.size() == 0; }
-    void clear() { parts.clear(); mode = 0; }
+    Path &operator=(const Path &other) = default;
+    Path &operator=(Path &&other) noexcept = default;
+    Path &operator=(const String &str);
+    Path &operator=(const char *str);
 
-    // Mode checking
-    bool isRoot() const;
-    bool isTagged() const;
-    bool isUrl() const;
-    bool isIpv4() const;
-    bool isIpv6() const;
+    // Static constants
+    static const Path Back;
+    static const Path Control;
+    static const Path Self;
+    static const Path IPv4;
+    static const Path IPv6;
+    static const Path Ipv4;
+    static const Path Ipv6;
+
+    // Type / Mode checks
+    bool isControl() const;
     bool isBack() const;
     bool isSelf() const;
-    bool isControl() const;
+    bool isIPv4() const;
+    bool isIpv4() const { return isIPv4(); }
+    bool isIPv6() const;
+    bool isIpv6() const { return isIPv6(); }
+    bool isRoot() const;
 
-    static const Path Back;
-    static const Path Self;
-    static const Path Control;
-
-    // URL & Tag manipulation
-    String getParam(const String &key) const;
-    void setParam(const String &key, const String &value);
-
-    Array<String> getTags() const;
-    void setTag(const String &tag);
-    bool hasTag(const String &tag) const;
-    void removeTag(const String &tag);
-    void removeTags();
-
-    String getSchema() const;
-    void setSchema(const String &schema);
-
-    String getMethod() const;
-    void setMethod(const String &method);
-
-    // Network helpers
+    // Network getters
     Array<u8> ipv4() const;
     Array<u8> ipv6() const;
     u16 port() const;
 
-    // Sub-path extraction
-    Path base() const;
-    Path path() const;
+    // Common path computation with wildcard support (* and **)
+    Path common(const Path &other) const;
 
-    // Comparison and Pattern Matching
-    bool common(const Path &other) const;
-    Array<u32> match(const Path &other) const;
-
+    // Serialization
     String toString() const;
-
-    bool operator==(const Path &other) const;
-    bool operator!=(const Path &other) const { return !(*this == other); }
 };
 
 } // namespace Ksee
 
 #endif // KSEE_PATH_HPP
-

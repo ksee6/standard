@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include "../include/Ksee/Types.hpp"
+#include "../include/Ksee/Ksee.hpp"
 #include "../include/Ksee/Func.hpp"
 #include "../include/Ksee/Iterator.hpp"
 #include "../include/Ksee/Array.hpp"
@@ -12,21 +12,18 @@
 #include "../include/Ksee/ID.hpp"
 #include "../include/Ksee/Path.hpp"
 #include "../include/Ksee/Tree.hpp"
-#include "../include/Ksee/Resource/Router.hpp"
-#include "../include/Ksee/Resource/Comms.hpp"
-#include "../include/Ksee/Crypto/Hash.hpp"
-#include "../include/Ksee/Crypto/SHA.hpp"
-#include "../include/Ksee/Crypto/Chacha.hpp"
-#include "../include/Ksee/Crypto/AEAD.hpp"
-#include "../include/Ksee/Crypto/ECC.hpp"
-#include "../include/Ksee/Crypto/Password.hpp"
-#include "../include/Ksee/Format/Yaml.hpp"
+#include "../include/Ksee/Comms/Packet.hpp"
+#include "../include/Ksee/Comms/Band.hpp"
+#include "../include/Ksee/Algorithm/Hash.hpp"
+#include "../include/Ksee/Algorithm/SHA.hpp"
+#include "../include/Ksee/Algorithm/Chacha.hpp"
+#include "../include/Ksee/Algorithm/AEAD.hpp"
+#include "../include/Ksee/Algorithm/ECC.hpp"
+#include "../include/Ksee/Algorithm/Password.hpp"
 #include "../include/Ksee/Auth/JWT.hpp"
 #include "../include/Ksee/Auth/Writ.hpp"
-#include "../include/Ksee/Parse/Regex.hpp"
-#include "../include/Ksee/Compression/Deflate.hpp"
-#include "../include/Ksee/Compression/Tar.hpp"
-#include "../include/Ksee/Compression/Zip.hpp"
+#include "../include/Ksee/Regex.hpp"
+#include "../include/Ksee/Algorithm/Compression.hpp"
 #include "../include/Ksee/Terminal/Color.hpp"
 #include "../include/Ksee/Terminal/Box.hpp"
 #include "../include/Ksee/Terminal/Command.hpp"
@@ -38,9 +35,9 @@
 #include "../include/Ksee/Math/Stats.hpp"
 #include "../include/Ksee/Math/Random.hpp"
 #include "../include/Ksee/Math/Interval.hpp"
-#include "../include/Ksee/Debug/Log.hpp"
-#include "../include/Ksee/Resource/Handle.hpp"
-#include "../include/Ksee/Resource/FS.hpp"
+#include "../include/Ksee/Debug.hpp"
+#include "../include/Ksee/Filesystem.hpp"
+#include "../include/Ksee/Base32.hpp"
 
 using namespace Ksee;
 
@@ -93,6 +90,9 @@ static void test_array_string() {
     // Multi-dimensional shape & transpose
     Array<int> tensor;
     tensor.allocate(6);
+    assert(tensor.size() == 0); // allocate reserves capacity without altering length
+    for (int i = 0; i < 6; ++i) tensor.push(i);
+    assert(tensor.size() == 6);
     tensor.shape(2, 3);
     assert(tensor.rank() == 2);
     assert(tensor.dimensions()[0] == 2);
@@ -245,8 +245,18 @@ static void test_eid_and_cb32() {
     assert(nanos() > 0);
     u64 ep = epochMillis();
     assert(ep > 1700000000000ULL); // After late 2023
+    assert(epochTime() >= ep);
     assert(isEpochTimeSet == true);
     assert(epochOnStart > 0);
+
+    // Time constructor checks: Time() and Time(u64)
+    Time tNow;
+    assert(tNow.us > 0);
+    assert(tNow.tz == gmt);
+
+    Time tSpecific(ep);
+    assert(tSpecific.tz == gmt);
+    assert(tSpecific.us == (i64)ep * 1000LL);
 
     // CB32 integer tests
     u32 u32Val = 0x12345678;
@@ -298,6 +308,26 @@ static void test_eid_and_cb32() {
     assert(decodeCB32(s512, u512Out));
     assert(u512Out == u512In);
 
+    // Standard RFC 4648 Base32 tests
+    String b32Str = encodeB32(u32Val);
+    assert(b32Str.size() == 7);
+    u32 b32d = decodeB32(b32Str);
+    assert(b32d == u32Val);
+
+    String hello = "Hello";
+    String helloB32 = encodeB32(hello);
+    assert(helloB32.startsWith("JBSWY3DP"));
+    String helloDec;
+    assert(decodeB32(helloB32, helloDec));
+    assert(helloDec == hello);
+
+    u64 b64d = decodeB32(encodeB32(u64Val));
+    assert(b64d == u64Val);
+
+    u128 u128B32Out;
+    assert(decodeB32(encodeB32(u128In), u128B32Out));
+    assert(u128B32Out == u128In);
+
     // EID tests
     EID e1 = EID::random();
     assert(e1.created_at >= ep);
@@ -335,28 +365,93 @@ static void test_eid_and_cb32() {
 
 static void test_path() {
     printf("[TEST] Path...\n");
-    Path p1("/path/to/something");
-    assert(p1[0] == "0");
-    assert(p1[1] == "path");
-    assert(p1[2] == "to");
-    assert(p1[3] == "something");
 
-    Path pUrl("schema:///domain.google.com:80/path1/path2?key=value&another=2#tag");
-    assert(pUrl[0] == "2");
-    assert(pUrl.getSchema() == "schema");
-    assert(pUrl.getParam("key") == "value");
-    assert(pUrl.getParam("another") == "2");
-    assert(pUrl.hasTag("tag"));
-    assert(pUrl.port() == 80);
+    // 1. Consts and type checks
+    assert(Path::Back.isBack());
+    assert(Path::Back.isControl());
+    assert(Path::Back == Path(String("1,1")));
 
+    assert(Path::Control.isControl());
+    assert(Path::Control == Path(String("1")));
+
+    assert(Path::Self.isSelf());
+    assert(Path::Self == Path(String("0")));
+
+    assert(Path::IPv4.isIPv4());
+    assert(Path::IPv4 == Path(String("4")));
+
+    assert(Path::IPv6.isIPv6());
+    assert(Path::IPv6 == Path(String("6")));
+
+    // 2. Extends directly and only Array<String>
+    Path p;
+    p.push("foo");
+    p.push("bar");
+    assert(p.size() == 2);
+    assert(p[0] == "foo");
+    assert(p[1] == "bar");
+
+    // Fast Array equality
+    Path pOther;
+    pOther.push("foo");
+    pOther.push("bar");
+    assert(p == pOther);
+    assert(p.equals(pOther));
+    assert(p.constantTimeEquals(pOther));
+
+    pOther.push("baz");
+    assert(p != pOther);
+    assert(!p.equals(pOther));
+    assert(!p.constantTimeEquals(pOther));
+
+    // 3. IPv4 detection, octets, and port
     Path pIp("192.168.1.13:80");
-    assert(pIp.isIpv4());
+    assert(pIp.isIPv4());
     assert(pIp.port() == 80);
+    Array<u8> octets = pIp.ipv4();
+    assert(octets.size() == 4);
+    assert(octets[0] == 192 && octets[1] == 168 && octets[2] == 1 && octets[3] == 13);
+    assert(pIp.toString() == "192.168.1.13:80");
 
-    Path pWild("/path/to/*");
-    Path pTarget("/path/to/myitem");
-    Array<u32> extracted = pWild.match(pTarget);
-    assert(!extracted.isEmpty());
+    Path pIpComma("4,1,1,1,1,123");
+    assert(pIpComma.isIPv4());
+    assert(pIpComma.port() == 123);
+    assert(pIpComma.ipv4()[0] == 1);
+    assert(pIpComma.toString() == "1.1.1.1:123");
+
+    Path pIpNoPort("10.0.0.1");
+    assert(pIpNoPort.isIPv4());
+    assert(pIpNoPort.port() == 0);
+    assert(pIpNoPort.ipv4()[0] == 10);
+
+    // 4. IPv6 detection and port
+    Path pIp6("[::1]:8080");
+    assert(pIp6.isIPv6());
+    assert(pIp6.port() == 8080);
+
+    // 5. Symmetric common path with * and **
+    Path pA("/users/*/profile");
+    Path pB("/users/123/profile");
+    Path cAB = pA.common(pB);
+    Path cBA = pB.common(pA);
+    assert(cAB == cBA);
+    assert(cAB.size() == 4); // "0", "users", "123", "profile"
+    assert(cAB[2] == "123");
+
+    // n-lazy level **
+    Path pWild("/files/**/document.pdf");
+    Path pTarget("/files/2026/november/reports/document.pdf");
+    Path cWild = pWild.common(pTarget);
+    Path cTarg = pTarget.common(pWild);
+    assert(cWild == cTarg);
+    assert(cWild == pTarget);
+
+    // Partial divergence
+    Path pX("/a/b/c");
+    Path pY("/a/b/d");
+    assert(pX.common(pY) == pY.common(pX));
+    assert(pX.common(pY) == Path("/a/b"));
+
     printf("  PASS: Path\n");
 }
 
@@ -488,25 +583,32 @@ static void test_standard_trees_and_petrify() {
     assert(obj.has("name"));
     assert(obj.has("age"));
 
-    // 3. Custom Tree<T> without petrify (direct byte dump)
+    // 3. Custom Tree<T> holds what it holds (no typ hack)
     Point2D pt{10, 20};
     Tree<Point2D> t_pt(pt);
-    assert(t_pt.isObject());
-    assert(t_pt.has("typ"));
-    assert(t_pt.has("val"));
-    assert(t_pt["typ"].asString() == getMangledCppType<Point2D>());
-    assert(t_pt["val"].asString().length() == sizeof(Point2D));
+    assert(t_pt.type == getMangledCppType<Point2D>());
+    assert(!t_pt.has("typ"));
+    assert(!t_pt.has("val"));
     assert((*t_pt).x == 10 && (*t_pt).y == 20);
 
-    // Custom Tree<T> with petrify method
+    // In yaml/json: unrecognized type returns empty string directly
+    assert(stringifyJSON(t_pt) == "");
+    assert(stringifyYaml(t_pt) == "");
+
+    // Custom Tree<T> with value
     PlayerState ps{"Hero", 100};
     Tree<PlayerState> t_ps(ps);
-    assert(t_ps.isObject());
-    assert(t_ps.has("typ"));
-    assert(t_ps.has("val"));
-    assert(t_ps["val"].asString() == "Hero:100");
+    assert(t_ps.type == getMangledCppType<PlayerState>());
+    assert(!t_ps.has("typ"));
+    assert(!t_ps.has("val"));
     assert(t_ps->name == "Hero");
     assert((*t_ps).health == 100);
+
+    // Tags on Tree
+    t_ps.tags.push("player");
+    t_ps.tags.push("active");
+    assert(t_ps.tags.size() == 2);
+    assert(t_ps.tags[0] == "player");
 
     // 4. stringifyJSON and stringifyYaml
     String compactJson = stringifyJSON(obj, 0);
@@ -533,7 +635,7 @@ static void test_standard_trees_and_petrify() {
         "  host: \"srv1\"\n";
 
     Tree<void> yamlTree;
-    bool yamlParsed = parseTree(yamlInput, yamlTree);
+    bool yamlParsed = parseYaml(yamlInput, yamlTree);
     assert(yamlParsed);
     assert(yamlTree["service_a"]["retries"].asInt() == 3);
     assert(yamlTree["service_a"]["timeout"].asInt() == 5000);
@@ -549,39 +651,19 @@ static void test_standard_trees_and_petrify() {
         "}\n";
 
     Tree<void> jsoncTree;
-    bool jsoncParsed = parseTree(jsoncInput, jsoncTree);
+    bool jsoncParsed = parseYaml(jsoncInput, jsoncTree);
     assert(jsoncParsed);
     assert(jsoncTree["title"].asString() == "Antigravity");
     assert(jsoncTree["count"].asInt() == 7);
 
-    // 6. Custom type parsing with parseTree<CustomTs...> and fallback to String
-    String customTypeJson = 
-        "{\n"
-        "  \"player\": {\n"
-        "    \"typ\": \"" + getMangledCppType<PlayerState>() + "\",\n"
-        "    \"val\": \"Knight:95\"\n"
-        "  },\n"
-        "  \"unregistered\": {\n"
-        "    \"typ\": \"UnregisteredCustomType\",\n"
-        "    \"val\": \"raw_unregistered_payload\"\n"
-        "  }\n"
-        "}";
-
-    Tree<void> customTree;
-    bool customParsed = parseTree<PlayerState>(customTypeJson, customTree);
-    assert(customParsed);
-
-    // Registered type PlayerState instantiated
-    Tree<void>* playerNode = customTree.get("player");
-    assert(playerNode != nullptr);
-    PlayerState restoredHero = playerNode->as<PlayerState>();
-    assert(restoredHero.name == "Knight");
-    assert(restoredHero.health == 95);
-
-    // Unregistered type falls back to String
-    Tree<void>* unregNode = customTree.get("unregistered");
-    assert(unregNode != nullptr);
-    assert(unregNode->asString() == "raw_unregistered_payload");
+    // 6. Custom type petrify roundtrip: preserves type and value, never fails
+    String petrifyCustom = petrify(t_ps);
+    assert(!petrifyCustom.isEmpty());
+    Tree<void> hydCustom;
+    bool hydCustomOk = hydrate(petrifyCustom, hydCustom);
+    assert(hydCustomOk);
+    assert(hydCustom.type == getMangledCppType<PlayerState>());
+    assert(hydCustom.asString() == "Hero:100");
 
     // 7. Petrified Tree: bitpacking and roundtrip fidelity
     Tree<void> petrifyTarget;
@@ -612,101 +694,6 @@ static void test_standard_trees_and_petrify() {
     assert(petrifiedData.size() < jsonRepr.size());
 
     printf("  PASS: Standard Trees, Custom Typs, YAML/JSON Parser, and Petrified Tree\n");
-}
-
-struct MockRequest {
-    String response;
-    bool write(const String &s) {
-        response += s;
-        return true;
-    }
-};
-
-static void test_router() {
-    printf("[TEST] Router (Resource/Router, Radix Tree Routing, Lifecycle Hooks)...\n");
-    using namespace Ksee::Resource;
-
-    Router<MockRequest> router;
-
-    bool leavingFired = false;
-    bool resolvedFired = false;
-    bool doneFired = false;
-
-    router.onLeaving([&](Path &p, MockRequest &req) -> bool {
-        leavingFired = true;
-        if (p == Path("/forbidden")) return false; // cancel
-        return true;
-    });
-
-    router.onResolved([&](Path &p, MockRequest &req) {
-        resolvedFired = true;
-    });
-
-    router.onDone([&]() {
-        doneFired = true;
-    });
-
-    // 1. Fallthrough test
-    router.handle("/api/data", [](Path &p, MockRequest &req) -> bool {
-        req.write("[middleware]");
-        return false; // pass to next
-    });
-
-    router.get("/api/data", [](Path &p, MockRequest &req) -> bool {
-        req.write("[handled:data]");
-        return true;
-    });
-
-    MockRequest req1;
-    bool ok1 = router.visit("/api/data", req1);
-    assert(ok1);
-    assert(leavingFired);
-    assert(resolvedFired);
-    assert(doneFired);
-    assert(router.currentRequest.response == "[middleware][handled:data]");
-
-    // 2. Guard cancellation test
-    leavingFired = false;
-    doneFired = false;
-    MockRequest req2;
-    bool ok2 = router.visit("/forbidden", req2);
-    assert(!ok2);
-    assert(leavingFired);
-    assert(!doneFired);
-
-    // 3. Method isolation test
-    router.post("/items", [](Path &p, MockRequest &req) -> bool {
-        req.write("[post-item]");
-        return true;
-    });
-
-    MockRequest reqPost;
-    Path postPath("/items");
-    postPath.setMethod("POST");
-    bool okPost = router.visit(postPath, reqPost);
-    assert(okPost);
-    assert(router.currentRequest.response == "[post-item]");
-
-    // GET on /items should fail
-    MockRequest reqGet;
-    Path getPath("/items");
-    getPath.setMethod("GET");
-    bool okGet = router.visit(getPath, reqGet);
-    assert(!okGet);
-
-    // 4. Path modification & Back test
-    assert(Path::Back.isBack());
-    router.handle("/redirect-me", [](Path &p, MockRequest &req) -> bool {
-        p = Path("/api/data");
-        return false; // re-routes to /api/data
-    });
-
-    MockRequest reqRedir;
-    bool okRedir = router.visit("/redirect-me", reqRedir);
-    assert(okRedir);
-    assert(router.currentRequest.response == "[middleware][handled:data]");
-
-    printf("  PASS: Router\n");
 }
 
 static void test_writ() {
@@ -859,8 +846,8 @@ static void test_writ() {
     printf("  PASS: Writ\n");
 }
 
-static void test_crypto() {
-    printf("[TEST] Crypto (Hash, SHA, Chacha, AEAD, ECC, Password)...\n");
+static void test_algorithm() {
+    printf("[TEST] Algorithm (Hash, SHA, Chacha, AEAD, ECC, Password, Deflate)...\n");
     String hBlake3 = hash("Hello world");
     assert(!hBlake3.isEmpty());
 
@@ -931,20 +918,20 @@ static void test_crypto() {
 
     String derived = pbkdf("myPassword", 0x12345678, "auth.domain.com", 32, 16, 2);
     assert(derived.size() == 32);
-    printf("  PASS: Crypto\n");
+    printf("  PASS: Algorithm\n");
 }
 
 static void test_yaml_jwt() {
     printf("[TEST] Yaml & JWT...\n");
     String yamlInput = "name: Antigravity\nversion: 2\nenabled: true\n";
     Tree<void> root;
-    bool ok = Yaml::parse(yamlInput, root);
+    bool ok = parseYaml(yamlInput, root);
     assert(ok);
     assert(root.has("name"));
     assert(root.has("version"));
     assert(root.has("enabled"));
 
-    String json = Yaml::toJSON(root, 0);
+    String json = stringifyJSON(root, 0);
     assert(!json.isEmpty());
 
     String jwtKey = "super-secret-jwt-key";
@@ -959,31 +946,59 @@ static void test_yaml_jwt() {
 }
 
 static void test_compression() {
-    printf("[TEST] Compression (Deflate, Tar, Zip)...\n");
+    printf("[TEST] Compression (Deflate & Inflate)...\n");
+    
+    // 1. Empty string
+    assert(Algorithm::deflate("").size() > 0);
+    assert(Algorithm::inflate(Algorithm::deflate("")) == "");
+
+    // 2. Short string
+    String shortStr = "Hello";
+    String defShort = Algorithm::deflate(shortStr);
+    assert(Algorithm::inflate(defShort) == shortStr);
+
+    // 3. Repeated pattern (LZ77 + Dynamic Huffman)
     String original = "This is a repeated string for compression testing! Repeat repeat repeat repeat!";
-    String compressed = Deflate::compress(original);
-    assert(!compressed.isEmpty());
-    String uncompressed = Deflate::decompress(compressed);
-    assert(uncompressed == original);
+    for (int k = 0; k < 5; ++k) original = original + original;
+    
+    // Test across different compression levels
+    for (int lvl = 0; lvl <= 9; ++lvl) {
+        String compressed = Algorithm::deflate(original, lvl);
+        assert(!compressed.isEmpty());
+        if (lvl > 0) {
+            assert(compressed.size() < original.size());
+        }
+        String uncompressed = Algorithm::inflate(compressed);
+        assert(uncompressed == original);
+    }
 
-    Array<TarEntry> tarEntries;
-    tarEntries.push(TarEntry{"test.txt", original, 0644, false});
-    String tarBytes = Tar::pack(tarEntries);
-    assert(!tarBytes.isEmpty());
+    // 4. Large buffer crossing 32KB window
+    String large;
+    for (int i = 0; i < 1000; ++i) {
+        large = large + "Unique pattern " + String((i64)i) + " repeated text to span multiple window frames! ";
+    }
+    String defLarge = Algorithm::deflate(large, 6);
+    assert(defLarge.size() < large.size());
+    String infLarge = Algorithm::inflate(defLarge);
+    assert(infLarge == large);
 
-    Array<TarEntry> unpacked = Tar::unpack(tarBytes);
-    assert(unpacked.size() >= 1);
-    assert(unpacked[0].data == original);
+    // 5. Corrupt input robustness (must not crash or hang)
+    String corrupt = "Not a valid compressed stream garbage header";
+    String res = Algorithm::inflate(corrupt);
+    (void)res;
 
-    Array<ZipEntry> zipEntries;
-    zipEntries.push(ZipEntry{"hello.txt", original, false});
-    String zipBytes = Zip::pack(zipEntries);
-    assert(!zipBytes.isEmpty());
+    // 6. Cross-compatibility: decode zlib (RFC 1950) and gzip (RFC 1952) streams
+    const u8 zlibBytes[] = {120, 156, 5, 193, 193, 9, 128, 48, 16, 4, 192, 86, 214, 2, 196, 34, 124, 250, 177, 133, 68, 87, 61, 136, 151, 224, 45, 72, 172, 222, 153, 249, 169, 17, 227, 86, 239, 150, 100, 217, 138, 169, 67, 12, 33, 83, 47, 233, 88, 187, 174, 234, 248, 138, 229, 233, 252, 172, 33, 249, 142, 37, 72, 152, 31, 37, 137, 195, 15, 106, 167, 25, 23};
+    String zlibStream((const char*)zlibBytes, sizeof(zlibBytes));
+    String zlibDec = Algorithm::inflate(zlibStream);
+    assert(zlibDec == "Cross-compatibility test between Python zlib/gzip and Ksee inflate!");
 
-    Array<ZipEntry> zipUnpacked = Zip::unpack(zipBytes);
-    assert(zipUnpacked.size() >= 1);
-    assert(zipUnpacked[0].data == original);
-    printf("  PASS: Compression\n");
+    const u8 gzipBytes[] = {31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 5, 193, 193, 9, 128, 48, 16, 4, 192, 86, 214, 2, 196, 34, 124, 250, 177, 133, 68, 87, 61, 136, 151, 224, 45, 72, 172, 222, 153, 249, 169, 17, 227, 86, 239, 150, 100, 217, 138, 169, 67, 12, 33, 83, 47, 233, 88, 187, 174, 234, 248, 138, 229, 233, 252, 172, 33, 249, 142, 37, 72, 152, 31, 37, 137, 195, 15, 189, 127, 157, 73, 67, 0, 0, 0};
+    String gzipStream((const char*)gzipBytes, sizeof(gzipBytes));
+    String gzipDec = Algorithm::inflate(gzipStream);
+    assert(gzipDec == "Cross-compatibility test between Python zlib/gzip and Ksee inflate!");
+
+    printf("  PASS: Compression (Deflate & Inflate)\n");
 }
 
 static void test_math() {
@@ -1097,27 +1112,10 @@ static void test_iterator() {
     printf("  PASS: Iterator\n");
 }
 
-static void test_resource_handle_fs() {
-    printf("[TEST] Resource Handle & FS...\n");
-    // 1. Packet & In-Memory Handle
-    Handle::Packet p("hello world");
-    p.author = 42;
-    p.position = 100;
-    assert(p.author == 42);
-    assert(p.position == 100);
-    assert(p == "hello world");
-    assert(p.length() == 11);
+static void test_resource_fs() {
+    printf("[TEST] Resource FS & OSFilesystem...\n");
 
-    Handle::Packet copy = p;
-    assert(copy.author == 42);
-    assert(copy == "hello world");
-
-    Handle inMem;
-    inMem.write("chunk1-");
-    inMem.write("chunk2");
-    assert(inMem.read() == "chunk1-chunk2");
-
-    // 2. FS Root & Preamble Sandboxing
+    // 1. FS Root & Preamble Sandboxing
     OSFilesystem jail;
     jail.root = "/tmp/sandbox";
     jail.preamble = "/app";
@@ -1125,9 +1123,12 @@ static void test_resource_handle_fs() {
     assert(resolved == "/tmp/sandbox/app/secret.txt");
     assert(resolved.startsWith("/tmp/sandbox"));
 
-    // 3. OSFilesystem Singleton I/O Operations
+    // 2. OSFilesystem Singleton High-Level Streaming
     Path testFile("/tmp/ksee_test_fs_unit.txt");
     fs.write(testFile, "Hello World from FS!");
+    assert(fs.exists(testFile));
+    assert(fs.isFile(testFile));
+    assert(!fs.isDir(testFile));
     String content = fs.read(testFile);
     assert(content == "Hello World from FS!");
 
@@ -1135,29 +1136,44 @@ static void test_resource_handle_fs() {
     String appended = fs.read(testFile);
     assert(appended == "Hello World from FS! Appended line.");
 
-    // Direct open Handle
-    Handle h = fs.open(testFile);
-    assert(!h.isClosed());
-    assert(h.size == appended.size());
-    String partial = h.read(5, 0);
-    assert(partial == "Hello");
-    h.close();
+    // 3. Raw Descriptor / Stream I/O
+    u64 h = fs.open(testFile, false);
+    assert(h != 0);
+    assert(fs.size(h) == appended.size());
+    char buf[16] = {0};
+    usz bytesRead = fs.read(h, buf, 5);
+    assert(bytesRead == 5);
+    assert(String(buf, 5) == "Hello");
+    fs.close(h);
 
-    // Signal: Move
+    // 4. Direct Virtual Filesystem Operations: Copy, Move, Mkdir, Rmdir, Unlink
+    Path copyFile("/tmp/ksee_test_fs_unit_copy.txt");
+    assert(fs.copy(copyFile, testFile));
+    assert(fs.read(copyFile) == appended);
+
     Path movedFile("/tmp/ksee_test_fs_unit_moved.txt");
     assert(fs.move(movedFile, testFile));
     assert(fs.read(movedFile) == appended);
 
-    // Signal: Unlink
+    Path testDir("/tmp/ksee_test_fs_dir");
+    assert(fs.mkdir(testDir));
+    assert(fs.exists(testDir));
+    assert(fs.isDir(testDir));
+    assert(!fs.isFile(testDir));
+    Array<Path> tmpList = fs.list(Path("/tmp"));
+    assert(tmpList.size() > 0);
+    assert(fs.rmdir(testDir));
+
     assert(fs.unlink(movedFile));
-    printf("  PASS: Resource Handle & FS\n");
+    assert(fs.unlink(copyFile));
+    printf("  PASS: Resource FS & OSFilesystem\n");
 }
 
 static void test_comms() {
-    printf("[TEST] Resource Comms (Standard Packet & Band)...\n");
+    printf("[TEST] Comms (Packet & Band)...\n");
 
     // 1. Standard Packet
-    Ksee::Resource::Comms::Packet pkt("Test payload", 5, 2, 100, 500, true, true, false);
+    Ksee::Comms::Packet pkt("Test payload", 5, 2, 100, 500, true, true, false);
     assert(pkt.handle == 5);
     assert(pkt.intent == 2);
     assert(pkt.offset == 100);
@@ -1168,7 +1184,7 @@ static void test_comms() {
     assert(pkt.payload == "Test payload");
 
     // 2. Standard Band
-    Ksee::Resource::Comms::Band band;
+    Ksee::Comms::Band band;
     assert(band.couldPush());
     assert(band.duty == 0);
     assert(band.maxBundleSize == 1400);
@@ -1183,7 +1199,7 @@ static void test_comms() {
     band.stun(100);
     assert(!band.couldPush());
 
-    printf("  PASS: Resource Comms (Standard Packet & Band)\n");
+    printf("  PASS: Comms (Packet & Band)\n");
 }
 
 int main() {
@@ -1194,7 +1210,7 @@ int main() {
     test_types();
     test_func();
     test_iterator();
-    test_resource_handle_fs();
+    test_resource_fs();
     test_comms();
     test_array_string();
     test_sparse_set_map();
@@ -1203,9 +1219,8 @@ int main() {
     test_path();
     test_tree();
     test_standard_trees_and_petrify();
-    test_router();
     test_writ();
-    test_crypto();
+    test_algorithm();
     test_yaml_jwt();
     test_compression();
     test_math();

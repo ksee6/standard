@@ -6,7 +6,7 @@
 #ifndef KSEE_FUNC_HPP
 #define KSEE_FUNC_HPP
 
-#include "Types.hpp"
+#include "Ksee.hpp"
 #if !defined(__KERNEL__) && !defined(KSEE_NO_STD) && !defined(MECA_EMBEDDED)
 #include <stddef.h>
 #if defined(__linux__)

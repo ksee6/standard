@@ -1,7 +1,7 @@
 #ifndef KSEE_MATH_INTERVAL_HPP
 #define KSEE_MATH_INTERVAL_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 
 namespace Ksee {
 

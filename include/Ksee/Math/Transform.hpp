@@ -6,7 +6,7 @@
 #ifndef KSEE_MATH_TRANSFORM_HPP
 #define KSEE_MATH_TRANSFORM_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "../String.hpp"
 #include "Trig.hpp"
 #include "Vec.hpp"

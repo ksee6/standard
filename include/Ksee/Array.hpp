@@ -6,7 +6,7 @@
 #ifndef KSEE_ARRAY_HPP
 #define KSEE_ARRAY_HPP
 
-#include "Types.hpp"
+#include "Ksee.hpp"
 #if defined(__has_include)
 #  if __has_include(<initializer_list>)
 #    include <initializer_list>
@@ -21,12 +21,18 @@
 #  if __has_include(<cstring>)
 #    include <cstring>
 #  endif
+#  if __has_include(<type_traits>)
+#    include <type_traits>
+#    define KSEE_HAS_STD_TYPE_TRAITS 1
+#  endif
 #  if __has_include(<atomic>)
 #    include <atomic>
 #    define KSEE_HAS_STD_ATOMIC 1
 #  endif
 #else
 #  include <cstring>
+#  include <type_traits>
+#  define KSEE_HAS_STD_TYPE_TRAITS 1
 #  include <atomic>
 #  define KSEE_HAS_STD_ATOMIC 1
 #endif
@@ -39,6 +45,25 @@
 #endif
 
 namespace Ksee {
+
+namespace ArrayDetail {
+template <typename U>
+inline void copyOrMove(U *dst, U &src, bool canMove) {
+#if defined(KSEE_HAS_STD_TYPE_TRAITS)
+  if constexpr (std::is_copy_constructible<U>::value) {
+    if (canMove) {
+      new (dst) U(Ksee::Move(src));
+    } else {
+      new (dst) U(src);
+    }
+  } else {
+    new (dst) U(Ksee::Move(src));
+  }
+#else
+  new (dst) U(Ksee::Move(src));
+#endif
+}
+}
 
 /**
  * @class Array
@@ -175,9 +200,8 @@ public:
         _rank(1), _fragments(nullptr), _fragmentCount(0), _fragmentCap(0) {
     if (list.size() > 0) {
       allocate(list.size());
-      usz i = 0;
       for (const auto &item : list) {
-        _data[i++] = item;
+        push(item);
       }
     }
   }
@@ -193,10 +217,9 @@ public:
         _rank(1), _fragments(nullptr), _fragmentCount(0), _fragmentCap(0) {
     constexpr usz count = 2 + sizeof...(Rest);
     allocate(count);
-    usz i = 0;
-    _data[i++] = T(Ksee::Forward<First>(first));
-    _data[i++] = T(Ksee::Forward<Second>(second));
-    ((_data[i++] = T(Ksee::Forward<Rest>(rest))), ...);
+    push(T(Ksee::Forward<First>(first)));
+    push(T(Ksee::Forward<Second>(second)));
+    (push(T(Ksee::Forward<Rest>(rest))), ...);
   }
 
   ~Array() {
@@ -378,8 +401,10 @@ private:
         new_cap = KSEE_ARRAY_MIN_CAP;
       Block *nb = Block::allocate(new_cap);
       T *dst = nb->get_data();
-      for (usz i = 0; i < old_s; ++i)
-        new (&dst[i]) T(Ksee::Move(f.data[i]));
+      bool canMove = (f.block && f.block->useCount == 1);
+      for (usz i = 0; i < old_s; ++i) {
+        ArrayDetail::copyOrMove(&dst[i], f.data[i], canMove);
+      }
       new (&dst[old_s]) T(val);
       nb->_length = old_s + 1;
       new (&dst[nb->_length]) T();
@@ -452,7 +477,7 @@ private:
       }
       if (idx == offset + _length) {
         if (!block || _length + 1 > block->capacity || block->useCount > 1) {
-          reserve((_length + 1) * 2);
+          allocate((_length + 1) * 2);
         }
         _data[_length].~T();
         new (&_data[_length]) T();
@@ -463,7 +488,7 @@ private:
       }
       if (offset > 0 && idx == offset - 1) {
         if (!block || _length + 1 > block->capacity || block->useCount > 1) {
-          reserve((_length + 1) * 2);
+          allocate((_length + 1) * 2);
         }
         _data[_length].~T();
         for (usz i = _length; i > 0; --i) {
@@ -499,8 +524,10 @@ private:
           new_cap = KSEE_ARRAY_MIN_CAP;
         Block *nb = Block::allocate(new_cap);
         T *dst = nb->get_data();
-        for (usz i = 0; i < f.length; ++i)
-          new (&dst[i]) T(Ksee::Move(f.data[i]));
+        bool canMove = (f.block && f.block->useCount == 1);
+        for (usz i = 0; i < f.length; ++i) {
+          ArrayDetail::copyOrMove(&dst[i], f.data[i], canMove);
+        }
         new (&dst[f.length]) T();
         nb->_length = f.length + 1;
         new (&dst[nb->_length]) T();
@@ -530,8 +557,10 @@ private:
         Block *nb = Block::allocate(new_cap);
         T *dst = nb->get_data();
         new (&dst[0]) T();
-        for (usz i = 0; i < f.length; ++i)
-          new (&dst[i + 1]) T(Ksee::Move(f.data[i]));
+        bool canMove = (f.block && f.block->useCount == 1);
+        for (usz i = 0; i < f.length; ++i) {
+          ArrayDetail::copyOrMove(&dst[i + 1], f.data[i], canMove);
+        }
         nb->_length = f.length + 1;
         new (&dst[nb->_length]) T();
         if (f.block) {
@@ -582,8 +611,10 @@ private:
         new_cap = KSEE_ARRAY_MIN_CAP;
       Block *nb = Block::allocate(new_cap);
       T *dst = nb->get_data();
-      for (usz i = 0; i < old_s; ++i)
-        new (&dst[i]) T(Ksee::Move(_data[i]));
+      bool canMove = (block->useCount == 1);
+      for (usz i = 0; i < old_s; ++i) {
+        ArrayDetail::copyOrMove(&dst[i], _data[i], canMove);
+      }
       new (&dst[old_s]) T(val);
       nb->_length = old_s + 1;
       new (&dst[nb->_length]) T();
@@ -760,104 +791,8 @@ public:
   /** @brief Clears the array. */
   void clear() { destroy(); }
 
-  /** @brief Allocates or resizes the array. */
-  bool allocate(usz len, bool safe = false) {
-    if (_fragmentCount > 0) {
-      if (len == 0) {
-        destroy();
-        return true;
-      }
-      while (_fragmentCount > 0) {
-        Fragment &last = _fragments[_fragmentCount - 1];
-        usz start = last.offset;
-        if (len > start) {
-          usz new_local_len = len - start;
-          Block *nb = Block::allocate(new_local_len);
-          usz toCopy = last.length < new_local_len ? last.length : new_local_len;
-          T *src = last.data;
-          T *dst = nb->get_data();
-          for (usz i = 0; i < toCopy; ++i)
-            new (&dst[i]) T(Ksee::Move(src[i]));
-          for (usz i = toCopy; i < new_local_len; ++i)
-            new (&dst[i]) T();
-          nb->_length = new_local_len;
-          new (&dst[new_local_len]) T();
-          if (last.block) {
-            if (--last.block->useCount == 0)
-              Block::destroy(last.block);
-          }
-          last.block = nb;
-          last.data = nb->get_data();
-          last.length = new_local_len;
-          return true;
-        } else {
-          if (last.block) {
-            if (--last.block->useCount == 0)
-              Block::destroy(last.block);
-          }
-          _fragmentCount--;
-        }
-      }
-      if (len > 0 && _fragmentCount == 0) {
-        delete[] _fragments;
-        _fragments = nullptr;
-        _fragmentCap = 0;
-        return allocate(len, safe);
-      }
-      return true;
-    }
-
-    if (!block) {
-      block = Block::allocate(len);
-      T *ptr = block->get_data();
-      for (usz i = 0; i < len; ++i)
-        new (&ptr[i]) T();
-      block->_length = len;
-      new (&ptr[len]) T();
-      _data = ptr;
-      _length = len;
-      return true;
-    }
-    bool is_root = (_data == block->get_data());
-    bool unique = (block->useCount == 1);
-    if (unique && is_root && len <= block->capacity) {
-      if (len > block->_length) {
-        T *ptr = block->get_data();
-        ptr[block->_length].~T();
-        for (usz i = block->_length; i < len; ++i)
-          new (&ptr[i]) T();
-      } else if (len < block->_length) {
-        T *ptr = block->get_data();
-        for (usz i = len; i <= block->_length; ++i)
-          ptr[i].~T();
-      }
-      block->_length = len;
-      T *ptr = block->get_data();
-      new (&ptr[len]) T();
-      _length = len;
-      return true;
-    }
-    if (safe)
-      return false;
-    Block *nb = Block::allocate(len);
-    usz copy_cnt = (_length < len) ? _length : len;
-    T *src = _data;
-    T *dst = nb->get_data();
-    for (usz i = 0; i < copy_cnt; ++i)
-      new (&dst[i]) T(Ksee::Move(src[i]));
-    for (usz i = copy_cnt; i < len; ++i)
-      new (&dst[i]) T();
-    nb->_length = len;
-    new (&dst[len]) T();
-    destroy();
-    block = nb;
-    _data = nb->get_data();
-    _length = len;
-    return true;
-  }
-
-  /** @brief Ensures capacity for at least cap elements. */
-  bool reserve(usz cap) {
+  /** @brief Ensures capacity for at least cap elements without altering length. */
+  bool allocate(usz cap) {
     if (_fragmentCount > 0) {
       Fragment &last = _fragments[_fragmentCount - 1];
       if (last.block && cap <= last.block->capacity)
@@ -869,8 +804,10 @@ public:
         T *src = last.data;
         T *dst = nb->get_data();
         usz toCopy = last.length < cap ? last.length : cap;
-        for (usz i = 0; i < toCopy; ++i)
-          new (&dst[i]) T(Ksee::Move(src[i]));
+        bool canMove = (last.block->useCount == 1);
+        for (usz i = 0; i < toCopy; ++i) {
+          ArrayDetail::copyOrMove(&dst[i], src[i], canMove);
+        }
         nb->_length = toCopy;
         if (--last.block->useCount == 0)
           Block::destroy(last.block);
@@ -890,8 +827,10 @@ public:
       T *src = _data;
       T *dst = nb->get_data();
       usz toCopy = _length < cap ? _length : cap;
-      for (usz i = 0; i < toCopy; i++)
-        new (&dst[i]) T(Ksee::Move(src[i]));
+      bool canMove = (block->useCount == 1);
+      for (usz i = 0; i < toCopy; i++) {
+        ArrayDetail::copyOrMove(&dst[i], src[i], canMove);
+      }
       nb->_length = toCopy;
       destroy();
     }
@@ -1019,8 +958,10 @@ public:
       if (new_cap < KSEE_ARRAY_MIN_CAP) new_cap = KSEE_ARRAY_MIN_CAP;
       Block *nb = Block::allocate(new_cap);
       T *dst = nb->get_data();
-      for (usz i = 0; i < old_s; ++i)
-        new (&dst[i]) T(Ksee::Move(_data[i]));
+      bool canMove = (block && block->useCount == 1);
+      for (usz i = 0; i < old_s; ++i) {
+        ArrayDetail::copyOrMove(&dst[i], _data[i], canMove);
+      }
       for (usz i = 0; i < count; ++i)
         new (&dst[old_s + i]) T(vals[i]);
       nb->_length = old_s + count;
@@ -1073,8 +1014,10 @@ public:
       T ret = _data[old_s - 1];
       Block *nb = Block::allocate(old_s - 1);
       T *dst = nb->get_data();
-      for (usz i = 0; i < old_s - 1; ++i)
-        new (&dst[i]) T(Ksee::Move(_data[i]));
+      bool canMove = (block && block->useCount == 1);
+      for (usz i = 0; i < old_s - 1; ++i) {
+        ArrayDetail::copyOrMove(&dst[i], _data[i], canMove);
+      }
       nb->_length = old_s - 1;
       new (&dst[nb->_length]) T();
       destroy();
@@ -1109,8 +1052,10 @@ public:
       Block *nb = Block::allocate(old_s + 1);
       T *dst = nb->get_data();
       new (&dst[0]) T(val);
-      for (usz i = 0; i < old_s; ++i)
-        new (&dst[i + 1]) T(Ksee::Move(_data[i]));
+      bool canMove = (block->useCount == 1);
+      for (usz i = 0; i < old_s; ++i) {
+        ArrayDetail::copyOrMove(&dst[i + 1], _data[i], canMove);
+      }
       nb->_length = old_s + 1;
       new (&dst[nb->_length]) T();
       destroy();
@@ -1186,8 +1131,10 @@ public:
       T ret = _data[0];
       Block *nb = Block::allocate(old_s - 1);
       T *dst = nb->get_data();
-      for (usz i = 1; i < old_s; ++i)
-        new (&dst[i - 1]) T(Ksee::Move(_data[i]));
+      bool canMove = (block->useCount == 1);
+      for (usz i = 1; i < old_s; ++i) {
+        ArrayDetail::copyOrMove(&dst[i - 1], _data[i], canMove);
+      }
       nb->_length = old_s - 1;
       new (&dst[nb->_length]) T();
       destroy();
@@ -1262,7 +1209,7 @@ public:
     usz len = size() - start;
     copy.allocate(len);
     for (usz i = 0; i < len; ++i)
-      copy[i] = (*this)[start + i];
+      copy.push((*this)[start + i]);
     copy.offset = offset + start;
     return copy;
   }
@@ -1282,7 +1229,7 @@ public:
     Array copy;
     copy.allocate(len);
     for (usz i = 0; i < len; ++i)
-      copy._data[i] = (*this)[start + i];
+      copy.push((*this)[start + i]);
     copy.offset = 0;
     return copy;
   }
@@ -1371,7 +1318,7 @@ public:
       usz size = (usz)(headerRes.value - 1);
       res.allocate(size);
       for (usz i = 0; i < size; ++i)
-        res[i] = Ksee::deserialize<T, S>(s, at);
+        res.push(Ksee::deserialize<T, S>(s, at));
     } else {
       auto rankRes = s.peekVarLong(at);
       if (rankRes.error)
@@ -1394,7 +1341,7 @@ public:
       res.allocate(total);
       res.offset = (usz)offsetRes.value;
       for (usz i = 0; i < total; ++i)
-        res[i] = Ksee::deserialize<T, S>(s, at);
+        res.push(Ksee::deserialize<T, S>(s, at));
     }
     return res;
   }
@@ -1499,8 +1446,10 @@ public:
     if (!block->device) {
       Array<T> res;
       res.allocate(size());
-      if (_length > 0)
-        memcpy(res.data(), data(), _length * sizeof(T));
+      if (_length > 0) {
+        for (usz i = 0; i < _length; ++i)
+          res.push(_data[i]);
+      }
       res.offset = offset;
       res._rank = _rank;
       if (_dims) {
@@ -1515,6 +1464,8 @@ public:
     if (count == 0)
       return cpu;
     cpu.allocate(count);
+    for (usz i = 0; i < count; ++i)
+      cpu.push(T());
     block->device->download(block->deviceHandle, cpu.data(), count * sizeof(T));
     cpu.offset = offset;
     cpu._rank = _rank;
@@ -1606,42 +1557,80 @@ public:
   Array<T> operator&(const Array<T>& o) const { return intersect(o); }
   Array<T> operator|(const Array<T>& o) const { return uni(o); }
   Array<T> operator-(const Array<T>& o) const { return difference(o); }
+
+  bool equals(const Array<T> &other) const {
+    if (this == &other) return true;
+    usz n = size();
+    if (n != other.size()) return false;
+    if (n == 0) return true;
+
+    if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T> || std::is_pointer_v<T>) {
+      if (_fragmentCount == 0 && other._fragmentCount == 0) {
+        return memcmp(_data, other._data, n * sizeof(T)) == 0;
+      }
+    }
+
+    for (usz i = 0; i < n; ++i) {
+      if (!((*this)[i] == other[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool operator==(const Array<T> &other) const { return equals(other); }
+  bool operator!=(const Array<T> &other) const { return !equals(other); }
+
+  bool constantTimeEquals(const Array<T> &other) const {
+    usz n = size();
+    usz otherN = other.size();
+    usz maxLen = n > otherN ? n : otherN;
+    volatile u8 diff = (n == otherN) ? 0 : 1;
+
+    for (usz i = 0; i < maxLen; ++i) {
+      usz idxA = i < n ? i : 0;
+      usz idxB = i < otherN ? i : 0;
+      if constexpr (std::is_integral_v<T>) {
+        diff |= (u8)((*this)[idxA] ^ other[idxB]);
+      } else {
+        diff |= ((*this)[idxA] == other[idxB]) ? 0 : 1;
+      }
+    }
+    return diff == 0;
+  }
 };
 
 #define XI_INLINE_ARRAY_BIN_OP(op)                                             \
   template <typename T>                                                        \
-  Array<T> operator op(const Array<T> &a,                          \
-                             const Array<T> &b) {                        \
+  Array<T> operator op(const Array<T> &a,                                      \
+                       const Array<T> &b) {                                    \
     usz n = a.size() < b.size() ? a.size() : b.size();                         \
-    Array<T> res;                                                        \
+    Array<T> res;                                                              \
     res.allocate(n);                                                           \
     const T *d_a = a.data();                                                   \
     const T *d_b = b.data();                                                   \
-    T *d_r = res.data();                                                       \
     for (usz i = 0; i < n; ++i)                                                \
-      d_r[i] = d_a[i] op d_b[i];                                               \
+      res.push(d_a[i] op d_b[i]);                                              \
     return res;                                                                \
   }                                                                            \
   template <typename T>                                                        \
-  Array<T> operator op(const Array<T> &a, const T &b) {            \
+  Array<T> operator op(const Array<T> &a, const T &b) {                        \
     usz n = a.size();                                                          \
-    Array<T> res;                                                        \
+    Array<T> res;                                                              \
     res.allocate(n);                                                           \
     const T *d_a = a.data();                                                   \
-    T *d_r = res.data();                                                       \
     for (usz i = 0; i < n; ++i)                                                \
-      d_r[i] = d_a[i] op b;                                                    \
+      res.push(d_a[i] op b);                                                   \
     return res;                                                                \
   }                                                                            \
   template <typename T>                                                        \
-  Array<T> operator op(const T &a, const Array<T> &b) {            \
+  Array<T> operator op(const T &a, const Array<T> &b) {                        \
     usz n = b.size();                                                          \
-    Array<T> res;                                                        \
+    Array<T> res;                                                              \
     res.allocate(n);                                                           \
     const T *d_b = b.data();                                                   \
-    T *d_r = res.data();                                                       \
     for (usz i = 0; i < n; ++i)                                                \
-      d_r[i] = a op d_b[i];                                                    \
+      res.push(a op d_b[i]);                                                   \
     return res;                                                                \
   }
 

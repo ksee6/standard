@@ -6,7 +6,7 @@
 #ifndef KSEE_FORMAT_JWT_HPP
 #define KSEE_FORMAT_JWT_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "../String.hpp"
 #include "../Tree.hpp"
 

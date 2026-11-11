@@ -130,8 +130,8 @@ Array<Array<Tree<void>>> Writ::validate(
     // 1. Time validity
     Array<bool> validTime;
     validTime.allocate(n);
+    for (usz i = 0; i < n; ++i) validTime.push(true);
     for (usz i = 0; i < n; ++i) {
-        validTime[i] = true;
         if (now > 0) {
             Tree<void>* startsNode = allWrits[i].get("starts");
             if (startsNode && now < (u64)startsNode->asNumber()) {
@@ -149,8 +149,8 @@ Array<Array<Tree<void>>> Writ::validate(
     // 2. Identify writs directly trusted by roots
     Array<bool> isRootTrusted;
     isRootTrusted.allocate(n);
+    for (usz i = 0; i < n; ++i) isRootTrusted.push(false);
     for (usz i = 0; i < n; ++i) {
-        isRootTrusted[i] = false;
         if (!validTime[i]) continue;
 
         const Tree<void> &w = allWrits[i];
@@ -218,6 +218,7 @@ Array<Array<Tree<void>>> Writ::validate(
     // 3. Parent-child delegation edges
     Array<Array<usz>> childrenOf;
     childrenOf.allocate(n);
+    for (usz i = 0; i < n; ++i) childrenOf.push(Array<usz>());
     for (usz i = 0; i < n; ++i) {
         if (!validTime[i]) continue;
         Tree<void>* pubNode = allWrits[i].get("public");
@@ -295,7 +296,7 @@ Array<Array<Tree<void>>> Writ::validate(
             Array<usz> path;
             Array<bool> visited;
             visited.allocate(n);
-            for (usz k = 0; k < n; ++k) visited[k] = false;
+            for (usz k = 0; k < n; ++k) visited.push(false);
             visited[r] = true;
             path.push(r);
             dfs(r, leaf, path, visited);

@@ -40,10 +40,13 @@ void Tree<void>::clear() {
         delete children[i];
     }
     children.clear();
-    m_forceArray = false;
+    type = "";
+    tags.clear();
+    rawValue = "";
 }
 
-Tree<void>::Tree(const Tree<void> &other) : m_forceArray(other.m_forceArray), path(other.path) {
+Tree<void>::Tree(const Tree<void> &other)
+    : path(other.path), type(other.type), tags(other.tags), rawValue(other.rawValue) {
     for (usz i = 0; i < other.children.size(); ++i) {
         Tree<void>* c = other.children[i]->clone();
         c->parent = this;
@@ -52,12 +55,13 @@ Tree<void>::Tree(const Tree<void> &other) : m_forceArray(other.m_forceArray), pa
 }
 
 Tree<void>::Tree(Tree<void> &&other) noexcept
-    : m_forceArray(other.m_forceArray),
-      children(std::move(other.children)),
+    : path(std::move(other.path)),
+      type(std::move(other.type)),
+      tags(std::move(other.tags)),
+      rawValue(std::move(other.rawValue)),
       parent(other.parent),
-      path(std::move(other.path)) {
+      children(std::move(other.children)) {
     other.parent = nullptr;
-    other.m_forceArray = false;
     for (usz i = 0; i < children.size(); ++i) {
         children[i]->parent = this;
     }
@@ -66,8 +70,10 @@ Tree<void>::Tree(Tree<void> &&other) noexcept
 Tree<void>& Tree<void>::operator=(const Tree<void> &other) {
     if (this != &other) {
         clear();
-        m_forceArray = other.m_forceArray;
         path = other.path;
+        type = other.type;
+        tags = other.tags;
+        rawValue = other.rawValue;
         for (usz i = 0; i < other.children.size(); ++i) {
             Tree<void>* c = other.children[i]->clone();
             c->parent = this;
@@ -80,12 +86,13 @@ Tree<void>& Tree<void>::operator=(const Tree<void> &other) {
 Tree<void>& Tree<void>::operator=(Tree<void> &&other) noexcept {
     if (this != &other) {
         clear();
-        m_forceArray = other.m_forceArray;
         children = std::move(other.children);
         parent = other.parent;
         path = std::move(other.path);
+        type = std::move(other.type);
+        tags = std::move(other.tags);
+        rawValue = std::move(other.rawValue);
         other.parent = nullptr;
-        other.m_forceArray = false;
         for (usz i = 0; i < children.size(); ++i) {
             children[i]->parent = this;
         }
@@ -95,7 +102,9 @@ Tree<void>& Tree<void>::operator=(Tree<void> &&other) noexcept {
 
 Tree<void>* Tree<void>::clone() const {
     Tree<void>* n = new Tree<void>(path);
-    n->m_forceArray = m_forceArray;
+    n->type = type;
+    n->tags = tags;
+    n->rawValue = rawValue;
     for (usz i = 0; i < children.size(); ++i) {
         Tree<void>* c = children[i]->clone();
         c->parent = n;
@@ -112,30 +121,15 @@ Tree<void>* Tree<void>::addChild(Tree<void>* c) {
     return c;
 }
 
-// -----------------------------------------------------------------------------
-// Array and Object Identification
-// -----------------------------------------------------------------------------
-
-bool Tree<void>::isArray() const {
-    if (m_forceArray) return true;
-    if (children.isEmpty()) return false;
-    for (usz i = 0; i < children.size(); ++i) {
-        if (!children[i]->path.isEmpty() && children[i]->path.toString().length() > 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool Tree<void>::isObject() const {
-    if (m_forceArray) return false;
-    if (children.isEmpty()) return !hasValue();
-    for (usz i = 0; i < children.size(); ++i) {
-        if (!children[i]->path.isEmpty() && children[i]->path.toString().length() > 0) {
-            return true;
-        }
-    }
-    return false;
+int Tree<void>::valueType() const {
+    if (type == "Array") return (int)TreeValueType::Array;
+    if (type == "Object") return (int)TreeValueType::Object;
+    if (type == "f64") return (int)TreeValueType::F64;
+    if (type == "String") return (int)TreeValueType::String;
+    if (type == "bool") return (int)TreeValueType::Byte;
+    if (type == "Comment") return (int)TreeValueType::Comment;
+    if (!type.isEmpty()) return (int)TreeValueType::Custom;
+    return (int)TreeValueType::Void;
 }
 
 // -----------------------------------------------------------------------------
@@ -143,17 +137,17 @@ bool Tree<void>::isObject() const {
 // -----------------------------------------------------------------------------
 
 static bool isPrefixOf(const Path &prefix, const Path &full) {
-    if (prefix.parts.size() > full.parts.size()) return false;
-    for (usz i = 0; i < prefix.parts.size(); ++i) {
-        if (prefix.parts[i] != full.parts[i]) return false;
+    if (prefix.size() > full.size()) return false;
+    for (usz i = 0; i < prefix.size(); ++i) {
+        if (prefix[i] != full[i]) return false;
     }
     return true;
 }
 
 static Path slicePath(const Path &p, usz start) {
     Path out;
-    for (usz i = start; i < p.parts.size(); ++i) {
-        out.parts.push(p.parts[i]);
+    for (usz i = start; i < p.size(); ++i) {
+        out.push(p[i]);
     }
     return out;
 }
@@ -166,7 +160,7 @@ Tree<void>* Tree<void>::get(const Path &target) const {
             return children[i];
         }
         if (isPrefixOf(children[i]->path, target) && !children[i]->path.isEmpty()) {
-            Path remaining = slicePath(target, children[i]->path.parts.size());
+            Path remaining = slicePath(target, children[i]->path.size());
             Tree<void>* res = children[i]->get(remaining);
             if (res) return res;
         }
@@ -203,7 +197,7 @@ bool Tree<void>::deleteKey(const Path &target) {
             children.remove((usz)i);
             deleted = true;
         } else if (isPrefixOf(children[(usz)i]->path, target) && !children[(usz)i]->path.isEmpty()) {
-            Path remaining = slicePath(target, children[(usz)i]->path.parts.size());
+            Path remaining = slicePath(target, children[(usz)i]->path.size());
             if (children[(usz)i]->deleteKey(remaining)) {
                 if (children[(usz)i]->children.isEmpty() && children[(usz)i]->isNull()) {
                     delete children[(usz)i];
@@ -274,7 +268,8 @@ Path Tree<void>::generate(const Path &target) const {
 static void collectQuery(const Tree<void>* node, const Path &target, bool strict, Array<Tree<void>*> &out) {
     for (usz i = 0; i < node->children.size(); ++i) {
         Tree<void>* child = node->children[i];
-        if (target.common(child->path) || (!strict && isPrefixOf(child->path, target))) {
+        Path cp = target.common(child->path);
+        if ((!cp.isEmpty() && (cp == child->path || cp == target)) || (!strict && isPrefixOf(child->path, target))) {
             out.push(child);
         }
         collectQuery(child, target, strict, out);
@@ -305,8 +300,8 @@ Tree<void>* Tree<void>::query(const Path &target, bool strict) const {
     int bestScore = -1;
     for (usz i = 0; i < res.size(); ++i) {
         int score = 0;
-        for (usz k = 0; k < res[i]->path.parts.size(); ++k) {
-            const String &pt = res[i]->path.parts[k];
+        for (usz k = 0; k < res[i]->path.size(); ++k) {
+            const String &pt = res[i]->path[k];
             if (pt != "*" && pt != "**" && !pt.isEmpty()) score++;
         }
         if (score > bestScore) {
@@ -377,10 +372,7 @@ static void stringifyJSONNode(const Tree<void> &node, u32 indentSize, u32 curren
         } else if (vt == (int)TreeValueType::String) {
             out += escapeJSON(node.asString());
         } else if (vt == (int)TreeValueType::Custom) {
-            // Custom typed nodes have "typ" and "val" children, handled below if children exist
-            // If treated as leaf, emit object
-            out += "{\"typ\":" + escapeJSON(node.get("typ") ? node.get("typ")->asString() : "")
-                 + ",\"val\":" + escapeJSON(node.get("val") ? node.get("val")->asString() : "") + "}";
+            out += escapeJSON(node.asString());
         }
         return;
     }
@@ -442,7 +434,28 @@ static void stringifyJSONNode(const Tree<void> &node, u32 indentSize, u32 curren
     out += "}";
 }
 
+static bool isRecognizedType(const Tree<void> &node) {
+    if (!node.type.isEmpty() &&
+        node.type != "Array" &&
+        node.type != "Object" &&
+        node.type != "f64" &&
+        node.type != "String" &&
+        node.type != "bool" &&
+        node.type != "Comment") {
+        return false;
+    }
+    for (usz i = 0; i < node.children.size(); ++i) {
+        if (node.children[i] && !isRecognizedType(*node.children[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 String stringifyJSON(const Tree<void> &tree, u32 identation) {
+    if (!isRecognizedType(tree)) {
+        return "";
+    }
     String out;
     stringifyJSONNode(tree, identation, 0, out);
     return out;
@@ -549,6 +562,9 @@ static void stringifyYamlNode(const Tree<void> &node, u32 indentStep, u32 curren
 }
 
 String stringifyYaml(const Tree<void> &tree, u32 identation) {
+    if (!isRecognizedType(tree)) {
+        return "";
+    }
     String out;
     stringifyYamlNode(tree, identation, 0, false, out);
     return out;
@@ -939,12 +955,15 @@ static Tree<void>* resolveCustomTypes(Tree<void>* node, const Array<Typ> &th) {
         node->children[i] = resolveCustomTypes(node->children[i], th);
     }
 
-    // Check if node is an object with "typ" and "val"
-    Tree<void>* typNode = node->get("typ");
-    Tree<void>* valNode = node->get("val");
-    if (typNode && valNode && node->children.size() == 2) {
-        String typName = typNode->asString();
-        String valStr = valNode->asString();
+    if (!node->type.isEmpty() &&
+        node->type != "Array" &&
+        node->type != "Object" &&
+        node->type != "f64" &&
+        node->type != "String" &&
+        node->type != "bool" &&
+        node->type != "Comment") {
+        String typName = node->type;
+        String valStr = node->asString();
         const Typ* match = nullptr;
         for (usz k = 0; k < th.size(); ++k) {
             if (th[k].name == typName) {
@@ -956,20 +975,16 @@ static Tree<void>* resolveCustomTypes(Tree<void>* node, const Array<Typ> &th) {
             Tree<void>* customNode = match->instantiate(valStr);
             if (customNode) {
                 customNode->path = node->path;
+                customNode->type = typName;
                 delete node;
                 return customNode;
             }
-        } else {
-            // "if the type isnt there with customTs, it will just handle it as String."
-            Tree<void>* strNode = new Tree<String>(node->path, valStr);
-            delete node;
-            return strNode;
         }
     }
     return node;
 }
 
-bool parseTreeWithTyps(const Array<Typ> &th, const String &string, Tree<void> &tree) {
+bool parseYamlWithTyps(const Array<Typ> &th, const String &string, Tree<void> &tree) {
     tree.clear();
     YamlJsonParser p(string);
     Tree<void>* parsed = p.parseValue(-1, &tree);
@@ -1013,13 +1028,17 @@ static void collectSymbols(const Tree<void>* node, Array<String> &dict, Map<Stri
         }
     }
 
-    if (node->valueType() == (int)TreeValueType::Custom) {
-        if (auto* typNode = node->get("typ")) {
-            String t = typNode->asString();
-            if (!dictMap.has(t)) {
-                dictMap.put(t, dict.size());
-                dict.push(t);
-            }
+    if (!node->type.isEmpty() &&
+        node->type != "Array" &&
+        node->type != "Object" &&
+        node->type != "f64" &&
+        node->type != "String" &&
+        node->type != "bool" &&
+        node->type != "Comment") {
+        String t = node->type;
+        if (!dictMap.has(t)) {
+            dictMap.put(t, dict.size());
+            dict.push(t);
         }
     } else if (node->valueType() == (int)TreeValueType::String) {
         String s = node->asString();
@@ -1204,8 +1223,8 @@ static void petrifyNode(const Tree<void>* node, const Map<String, usz> &dictMap,
         }
 
         case (int)TreeValueType::Custom: {
-            String typName = node->get("typ") ? node->get("typ")->asString() : "";
-            String valStr = node->get("val") ? node->get("val")->asString() : "";
+            String typName = node->type;
+            String valStr = node->asString();
             const usz* tidx = dictMap.get(typName);
             usz typIdx = tidx ? *tidx : 0;
             u8 payload = typIdx < 15 ? (u8)typIdx : 15;
@@ -1374,8 +1393,8 @@ static Tree<void>* hydrateNode(const String &petrified, usz &offset, const Array
             offset += valLen;
 
             Tree<void>* customNode = new Tree<void>();
-            customNode->addChild(new Tree<String>("typ", typName));
-            customNode->addChild(new Tree<String>("val", valStr));
+            customNode->type = typName;
+            customNode->rawValue = valStr;
             return customNode;
         }
 
@@ -1462,16 +1481,18 @@ bool hydrate(const String &petrified, Tree<void> &tree) {
 
     tree.clear();
     tree.path = root->path;
-    tree.setArray(root->isArray());
+    tree.type = root->type;
+    tree.tags = root->tags;
+    tree.rawValue = root->rawValue;
 
-    if (!root->hasValue()) {
+    if (root->children.size() > 0) {
         for (usz i = 0; i < root->children.size(); ++i) {
             tree.addChild(root->children[i]->clone());
         }
-        delete root;
-    } else {
-        tree.addChild(root);
+    } else if (root->hasValue() && tree.rawValue.isEmpty()) {
+        tree.rawValue = root->asString();
     }
+    delete root;
     return true;
 }
 
@@ -1498,7 +1519,7 @@ bool Tree<void>::readFromBinary(const u8 *data, usz length, usz &bytesRead) {
 Tree<void> Tree<void>::parse(const String &val) {
     Tree<void> t;
     if (!hydrate(val, t)) {
-        parseTree(val, t);
+        parseYaml(val, t);
     }
     return t;
 }

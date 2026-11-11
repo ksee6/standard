@@ -6,12 +6,12 @@
 #ifndef KSEE_AUTH_WRIT_HPP
 #define KSEE_AUTH_WRIT_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 #include "../String.hpp"
 #include "../Array.hpp"
 #include "../Tree.hpp"
-#include "../Crypto/ECC.hpp"
-#include "../Crypto/Hash.hpp"
+#include "../Algorithm/ECC.hpp"
+#include "../Algorithm/Hash.hpp"
 
 namespace Ksee {
 

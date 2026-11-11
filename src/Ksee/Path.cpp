@@ -1,6 +1,6 @@
 /**
  * @file Path.cpp
- * @brief High-performance unified Path implementation for Ksee.
+ * @brief High-performance pure hierarchical Path extending directly and only Array<String>.
  */
 
 #include "../../include/Ksee/Path.hpp"
@@ -64,530 +64,154 @@ static bool parseIpv6String(const String &s, Array<String> &hextets, String &por
     return true;
 }
 
-Path::Path() {}
+// -----------------------------------------------------------------------------
+// Constructors
+// -----------------------------------------------------------------------------
 
-Path::Path(const char *path) : Path(String(path)) {}
+Path::Path() : Array<String>() {}
 
-Path::Path(const Array<String> &pathParts) : parts(pathParts) {
-    if (parts.size() > 0) {
-        if (parts[0] == "0") mode = 1;
-        else if (parts[0] == "1" && parts.size() >= 3 && isAllDigits(parts[1])) mode = 2;
-        else if (parts[0] == "2" && parts.size() >= 8) mode = 3;
-        else if (parts[0] == "3" && parts.size() >= 5) mode = 4;
-        else if (parts[0] == "4" && parts.size() > 3) mode = 5;
-        else mode = 0;
+Path::Path(const Array<String> &other) : Array<String>(other) {}
+
+Path::Path(Array<String> &&other) noexcept : Array<String>(Ksee::Move(other)) {}
+
+Path::Path(const char *str) : Path(String(str)) {}
+
+Path::Path(const Array<u32> &parts) : Array<String>() {
+    for (usz i = 0; i < parts.size(); ++i) {
+        push(String::fromNumber(parts[i]));
     }
 }
 
-Path::Path(const Array<u32> &pathParts) {
-    for (usz i = 0; i < pathParts.size(); ++i) {
-        parts.push(String::fromNumber(pathParts[i]));
+#if defined(KSEE_HAS_STD_INITIALIZER_LIST)
+Path::Path(std::initializer_list<String> list) : Array<String>() {
+    for (const auto &item : list) {
+        push(item);
     }
-    mode = 0;
 }
 
-Path::Path(const String &path) {
-    if (path.isEmpty()) {
-        return;
+Path::Path(std::initializer_list<const char*> list) : Array<String>() {
+    for (const auto &item : list) {
+        push(String(item));
     }
+}
+#endif
 
-    // 1. Direct comma-separated list
-    // e.g. "0,path,to" or "1,2,base,tag" or "2,schema,,4,..."
-    if (path.includes(",") && (path.startsWith("0,") || path.startsWith("1,") || path.startsWith("2,") || path.startsWith("3,") || path.startsWith("4,"))) {
-        parts = splitByChar(path, ',');
-        if (parts.size() > 0) {
-            if (parts[0] == "0") mode = 1;
-            else if (parts[0] == "1" && parts.size() >= 3 && isAllDigits(parts[1])) mode = 2;
-            else if (parts[0] == "2" && parts.size() >= 8) mode = 3;
-            else if (parts[0] == "3" && parts.size() >= 5) mode = 4;
-            else if (parts[0] == "4" && parts.size() > 3) mode = 5;
-            else mode = 0;
-        }
-        return;
-    }
+Path::Path(const String &path) : Array<String>() {
+    if (path.isEmpty()) return;
 
-    // 2. URL parsing: schema://[method@]host[:port]/path?query#tag
-    long long schemaIdx = path.find("://");
-    if (schemaIdx != -1) {
-        String schema = path.substring(0, (usz)schemaIdx);
-        String rest = path.substring((usz)schemaIdx + 3);
-
-        // Strip extra slashes if e.g. schema:///host
-        while (rest.startsWith("/")) {
-            rest = rest.substring(1);
-        }
-
-        // Tag: #tag
-        String tag = "";
-        long long hashIdx = rest.find("#");
-        if (hashIdx != -1) {
-            tag = rest.substring((usz)hashIdx + 1);
-            rest = rest.substring(0, (usz)hashIdx);
-        }
-
-        // Query: ?k1=v1&k2=v2
-        Array<String> params;
-        long long queryIdx = rest.find("?");
-        if (queryIdx != -1) {
-            String qStr = rest.substring((usz)queryIdx + 1);
-            rest = rest.substring(0, (usz)queryIdx);
-            Array<String> pairs = splitByChar(qStr, '&');
-            for (usz i = 0; i < pairs.size(); ++i) {
-                if (pairs[i].isEmpty()) continue;
-                long long eq = pairs[i].find("=");
-                if (eq != -1) {
-                    params.push(pairs[i].substring(0, (usz)eq));
-                    params.push(pairs[i].substring((usz)eq + 1));
-                } else {
-                    params.push(pairs[i]);
-                    params.push("");
-                }
-            }
-        }
-
-        // Split host from path
-        String hostPart = rest;
-        String pathPart = "";
-        long long slashIdx = rest.find("/");
-        if (slashIdx != -1) {
-            hostPart = rest.substring(0, (usz)slashIdx);
-            pathPart = rest.substring((usz)slashIdx + 1);
-        }
-
-        // Method: method@host
-        String method = "";
-        long long atIdx = hostPart.find("@");
-        if (atIdx != -1) {
-            method = hostPart.substring(0, (usz)atIdx);
-            hostPart = hostPart.substring((usz)atIdx + 1);
-        }
-
-        // Base path from hostPart
-        Path basePath(hostPart);
-
-        // Path segments
-        Array<String> subPaths;
-        if (!pathPart.isEmpty()) {
-            Array<String> rawPaths = splitByChar(pathPart, '/');
-            for (usz i = 0; i < rawPaths.size(); ++i) {
-                if (rawPaths[i] == "*") {
-                    subPaths.push("");
-                } else {
-                    subPaths.push(rawPaths[i]);
-                }
-            }
-        }
-
-        // Construct URL parts:
-        // 2, schema, method, baseLength, (...base), pathLength, (...path), tag, paramKey1, paramVal1...
-        mode = 3;
-        parts.push("2");
-        parts.push(schema);
-        parts.push(method);
-        parts.push(String::fromNumber(basePath.parts.size()));
-        for (usz i = 0; i < basePath.parts.size(); ++i) {
-            parts.push(basePath.parts[i]);
-        }
-        parts.push(String::fromNumber(subPaths.size()));
-        for (usz i = 0; i < subPaths.size(); ++i) {
-            parts.push(subPaths[i]);
-        }
-        parts.push(tag);
-        for (usz i = 0; i < params.size(); ++i) {
-            parts.push(params[i]);
+    // 1. Direct comma-separated segments: "4,1,1,1,1,123" or "1,1" or "0,path,to"
+    if (path.includes(",")) {
+        Array<String> items = splitByChar(path, ',');
+        for (usz i = 0; i < items.size(); ++i) {
+            push(items[i]);
         }
         return;
     }
 
-    // 3. Tagged path: /path/to/something#tag1#tag2
-    if (path.includes("#")) {
-        Array<String> hashes = splitByChar(path, '#');
-        String mainPath = hashes[0];
-        Path baseP(mainPath);
-        mode = 2;
-        parts.push("1");
-        parts.push(String::fromNumber(baseP.parts.size()));
-        for (usz i = 0; i < baseP.parts.size(); ++i) {
-            parts.push(baseP.parts[i]);
-        }
-        for (usz i = 1; i < hashes.size(); ++i) {
-            parts.push(hashes[i]);
-        }
+    // 2. IPv4 detection: "192.168.1.1:80" or "192.168.1.1"
+    Array<String> octets;
+    String portStr;
+    if (parseIpv4String(path, octets, portStr)) {
+        push("4");
+        for (usz i = 0; i < 4; ++i) push(octets[i]);
+        if (!portStr.isEmpty()) push(portStr);
         return;
     }
 
-    // 4. IPv4 detection
-    Array<String> ipOctets;
-    String ipPort;
-    if (parseIpv4String(path, ipOctets, ipPort)) {
-        mode = 4;
-        parts.push("3");
-        for (usz i = 0; i < 4; ++i) parts.push(ipOctets[i]);
-        if (!ipPort.isEmpty()) parts.push(ipPort);
+    // 3. IPv6 detection: "[::1]:8080" or "fe80::1"
+    Array<String> hextets;
+    if (parseIpv6String(path, hextets, portStr)) {
+        push("6");
+        for (usz i = 0; i < hextets.size(); ++i) push(hextets[i]);
+        if (!portStr.isEmpty()) push(portStr);
         return;
     }
 
-    // 5. IPv6 detection
-    Array<String> ip6Hextets;
-    if (parseIpv6String(path, ip6Hextets, ipPort)) {
-        mode = 5;
-        parts.push("4");
-        for (usz i = 0; i < ip6Hextets.size(); ++i) parts.push(ip6Hextets[i]);
-        if (!ipPort.isEmpty()) parts.push(ipPort);
-        return;
-    }
-
-    // 6. Root path: starts with /
+    // 4. Root path: starts with /
     if (path.startsWith("/")) {
-        mode = 1;
-        parts.push("0");
-        String p = path.substring(1);
-        if (!p.isEmpty()) {
-            Array<String> slashes = splitByChar(p, '/');
-            for (usz i = 0; i < slashes.size(); ++i) {
-                if (slashes[i] == "*") parts.push("");
-                else parts.push(slashes[i]);
+        push("0");
+        String rest = path.substring(1);
+        if (!rest.isEmpty()) {
+            Array<String> segs = splitByChar(rest, '/');
+            for (usz i = 0; i < segs.size(); ++i) {
+                push(segs[i]);
             }
         }
         return;
     }
 
-    // 7. Host with port: e.g. domain.google.com:80 or 127.0.0.1:8080 (no slashes)
-    if (!path.includes("/") && path.includes(":")) {
-        long long colon = path.find(":");
-        if (colon != -1) {
-            String host = path.substring(0, (usz)colon);
-            String port = path.substring((usz)colon + 1);
-            if (isAllDigits(port) && !port.isEmpty()) {
-                mode = 0;
-                parts.push(host);
-                parts.push(port);
-                return;
-            }
+    // 5. General relative path: "a/b/c"
+    if (path.includes("/")) {
+        Array<String> segs = splitByChar(path, '/');
+        for (usz i = 0; i < segs.size(); ++i) {
+            push(segs[i]);
         }
+        return;
     }
 
-    // 8. General relative path: path/to/something
-    mode = 0;
-    Array<String> slashes = splitByChar(path, '/');
-    for (usz i = 0; i < slashes.size(); ++i) {
-        if (slashes[i] == "*") parts.push("");
-        else parts.push(slashes[i]);
-    }
+    // Single token: "0", "1", "4", "6", "token"
+    push(path);
 }
 
-String Path::operator[](usz idx) const {
-    if (idx >= parts.size()) return "";
-    return parts[idx];
+Path &Path::operator=(const String &str) {
+    *this = Path(str);
+    return *this;
 }
 
-bool Path::isRoot() const {
-    return mode == 1;
+Path &Path::operator=(const char *str) {
+    *this = Path(String(str));
+    return *this;
 }
 
-bool Path::isTagged() const {
-    return mode == 2;
-}
+// -----------------------------------------------------------------------------
+// Static Constants
+// -----------------------------------------------------------------------------
 
-bool Path::isUrl() const {
-    return mode == 3;
-}
+const Path Path::Back = Path(String("1,1"));
+const Path Path::Control = Path(String("1"));
+const Path Path::Self = Path(String("0"));
+const Path Path::IPv4 = Path(String("4"));
+const Path Path::IPv6 = Path(String("6"));
+const Path Path::Ipv4 = Path::IPv4;
+const Path Path::Ipv6 = Path::IPv6;
 
-bool Path::isIpv4() const {
-    if (mode == 4) return true;
-    if (isUrl() || isTagged()) {
-        return base().isIpv4();
-    }
-    return false;
-}
+// -----------------------------------------------------------------------------
+// Type / Mode checks
+// -----------------------------------------------------------------------------
 
-bool Path::isIpv6() const {
-    if (mode == 5) return true;
-    if (isUrl() || isTagged()) {
-        return base().isIpv6();
-    }
-    return false;
+bool Path::isControl() const {
+    return size() >= 1 && (*this)[0] == "1";
 }
 
 bool Path::isBack() const {
-    return (parts.size() >= 2 && parts[0] == "1" && parts[1] == "1") ||
-           (parts.size() == 2 && parts[0] == "0" && parts[1] == "1");
+    return size() >= 2 && (*this)[0] == "1" && (*this)[1] == "1";
 }
 
 bool Path::isSelf() const {
-    return parts.size() == 1 && parts[0] == "0";
+    return size() == 1 && (*this)[0] == "0";
 }
 
-bool Path::isControl() const {
-    return parts.size() > 0 && parts[0] == "1";
+bool Path::isIPv4() const {
+    return size() >= 1 && (*this)[0] == "4";
 }
 
-static Path createBackPath() {
-    Path p;
-    p.parts.push("1");
-    p.parts.push("1");
-    p.mode = 0;
-    return p;
+bool Path::isIPv6() const {
+    return size() >= 1 && (*this)[0] == "6";
 }
 
-static Path createSelfPath() {
-    Path p;
-    p.parts.push("0");
-    p.mode = 0;
-    return p;
+bool Path::isRoot() const {
+    return size() >= 1 && (*this)[0] == "0";
 }
 
-static Path createControlPath() {
-    Path p;
-    p.parts.push("1");
-    p.mode = 0;
-    return p;
-}
-
-const Path Path::Back = createBackPath();
-const Path Path::Self = createSelfPath();
-const Path Path::Control = createControlPath();
-
-Path Path::base() const {
-    if (isTagged()) {
-        if (parts.size() < 2) return Path();
-        usz baseLen = (usz)parts[1].toLong();
-        Path b;
-        for (usz i = 0; i < baseLen && (2 + i) < parts.size(); ++i) {
-            b.parts.push(parts[2 + i]);
-        }
-        if (b.parts.size() > 0) {
-            if (b.parts[0] == "0") b.mode = 1;
-            else if (b.parts[0] == "1" && b.parts.size() >= 3 && isAllDigits(b.parts[1])) b.mode = 2;
-            else if (b.parts[0] == "2" && b.parts.size() >= 8) b.mode = 3;
-            else if (b.parts[0] == "3" && b.parts.size() >= 5) b.mode = 4;
-            else if (b.parts[0] == "4" && b.parts.size() > 3) b.mode = 5;
-            else b.mode = 0;
-        }
-        return b;
-    }
-    if (isUrl()) {
-        if (parts.size() < 4) return Path();
-        usz baseLen = (usz)parts[3].toLong();
-        Path b;
-        for (usz i = 0; i < baseLen && (4 + i) < parts.size(); ++i) {
-            b.parts.push(parts[4 + i]);
-        }
-        if (b.parts.size() > 0) {
-            if (b.parts[0] == "0") b.mode = 1;
-            else if (b.parts[0] == "1" && b.parts.size() >= 3 && isAllDigits(b.parts[1])) b.mode = 2;
-            else if (b.parts[0] == "2" && b.parts.size() >= 8) b.mode = 3;
-            else if (b.parts[0] == "3" && b.parts.size() >= 5) b.mode = 4;
-            else if (b.parts[0] == "4" && b.parts.size() > 3) b.mode = 5;
-            else b.mode = 0;
-        }
-        return b;
-    }
-    return *this;
-}
-
-Path Path::path() const {
-    if (isUrl()) {
-        if (parts.size() < 4) return *this;
-        usz baseLen = (usz)parts[3].toLong();
-        usz pathOffset = 4 + baseLen;
-        if (pathOffset >= parts.size()) return Path();
-        usz pathLen = (usz)parts[pathOffset].toLong();
-        Path p;
-        for (usz i = 0; i < pathLen && (pathOffset + 1 + i) < parts.size(); ++i) {
-            p.parts.push(parts[pathOffset + 1 + i]);
-        }
-        return p;
-    }
-    return *this;
-}
-
-String Path::getParam(const String &key) const {
-    if (!isUrl()) return "";
-    usz baseLen = (usz)parts[3].toLong();
-    usz pathOffset = 4 + baseLen;
-    if (pathOffset >= parts.size()) return "";
-    usz pathLen = (usz)parts[pathOffset].toLong();
-    usz tagOffset = pathOffset + 1 + pathLen;
-    usz paramOffset = tagOffset + 1; // after tag
-
-    for (usz i = paramOffset; i + 1 < parts.size(); i += 2) {
-        if (parts[i] == key) {
-            return parts[i + 1];
-        }
-    }
-    return "";
-}
-
-void Path::setParam(const String &key, const String &value) {
-    if (!isUrl()) {
-        // Convert ourselves into a URL base
-        Path old = *this;
-        parts.clear();
-        parts.push("2");
-        parts.push(""); // schema
-        parts.push(""); // method
-        parts.push(String::fromNumber(old.parts.size()));
-        for (usz i = 0; i < old.parts.size(); ++i) parts.push(old.parts[i]);
-        parts.push("0"); // path length 0
-        parts.push("");  // tag
-        mode = 3;
-    }
-
-    usz baseLen = (usz)parts[3].toLong();
-    usz pathOffset = 4 + baseLen;
-    usz pathLen = (usz)parts[pathOffset].toLong();
-    usz tagOffset = pathOffset + 1 + pathLen;
-    usz paramOffset = tagOffset + 1;
-
-    for (usz i = paramOffset; i + 1 < parts.size(); i += 2) {
-        if (parts[i] == key) {
-            if (value.isEmpty()) {
-                // remove param
-                parts.remove(i);
-                parts.remove(i);
-            } else {
-                parts[i + 1] = value;
-            }
-            return;
-        }
-    }
-
-    if (!value.isEmpty()) {
-        parts.push(key);
-        parts.push(value);
-    }
-}
-
-Array<String> Path::getTags() const {
-    Array<String> tags;
-    if (isUrl()) {
-        usz baseLen = (usz)parts[3].toLong();
-        usz pathOffset = 4 + baseLen;
-        if (pathOffset < parts.size()) {
-            usz pathLen = (usz)parts[pathOffset].toLong();
-            usz tagOffset = pathOffset + 1 + pathLen;
-            if (tagOffset < parts.size() && !parts[tagOffset].isEmpty()) {
-                tags.push(parts[tagOffset]);
-            }
-        }
-        return tags;
-    }
-    if (isTagged()) {
-        if (parts.size() >= 2) {
-            usz baseLen = (usz)parts[1].toLong();
-            for (usz i = 2 + baseLen; i < parts.size(); ++i) {
-                tags.push(parts[i]);
-            }
-        }
-        return tags;
-    }
-    return tags;
-}
-
-void Path::setTag(const String &tag) {
-    if (isUrl()) {
-        usz baseLen = (usz)parts[3].toLong();
-        usz pathOffset = 4 + baseLen;
-        usz pathLen = (usz)parts[pathOffset].toLong();
-        usz tagOffset = pathOffset + 1 + pathLen;
-        if (tagOffset < parts.size()) {
-            parts[tagOffset] = tag;
-        }
-        return;
-    }
-    if (!isTagged()) {
-        Path old = *this;
-        parts.clear();
-        mode = 2;
-        parts.push("1");
-        parts.push(String::fromNumber(old.parts.size()));
-        for (usz i = 0; i < old.parts.size(); ++i) parts.push(old.parts[i]);
-    }
-    parts.push(tag);
-}
-
-bool Path::hasTag(const String &tag) const {
-    Array<String> tags = getTags();
-    for (usz i = 0; i < tags.size(); ++i) {
-        if (tags[i] == tag) return true;
-    }
-    return false;
-}
-
-void Path::removeTag(const String &tag) {
-    if (isUrl()) {
-        usz baseLen = (usz)parts[3].toLong();
-        usz pathOffset = 4 + baseLen;
-        usz pathLen = (usz)parts[pathOffset].toLong();
-        usz tagOffset = pathOffset + 1 + pathLen;
-        if (tagOffset < parts.size() && parts[tagOffset] == tag) {
-            parts[tagOffset] = "";
-        }
-        return;
-    }
-    if (isTagged()) {
-        usz baseLen = (usz)parts[1].toLong();
-        for (usz i = 2 + baseLen; i < parts.size(); ++i) {
-            if (parts[i] == tag) {
-                parts.remove(i);
-                return;
-            }
-        }
-    }
-}
-
-void Path::removeTags() {
-    if (isUrl()) {
-        usz baseLen = (usz)parts[3].toLong();
-        usz pathOffset = 4 + baseLen;
-        usz pathLen = (usz)parts[pathOffset].toLong();
-        usz tagOffset = pathOffset + 1 + pathLen;
-        if (tagOffset < parts.size()) {
-            parts[tagOffset] = "";
-        }
-        return;
-    }
-    if (isTagged()) {
-        Path b = base();
-        *this = b;
-    }
-}
-
-String Path::getSchema() const {
-    if (isUrl() && parts.size() > 1) return parts[1];
-    return "";
-}
-
-void Path::setSchema(const String &schema) {
-    if (!isUrl()) {
-        setParam("", "");
-    }
-    if (parts.size() > 1) {
-        parts[1] = schema;
-    }
-}
-
-String Path::getMethod() const {
-    if (isUrl() && parts.size() > 2) return parts[2];
-    return "";
-}
-
-void Path::setMethod(const String &method) {
-    if (!isUrl()) {
-        setParam("", "");
-    }
-    if (parts.size() > 2) {
-        parts[2] = method;
-    }
-}
+// -----------------------------------------------------------------------------
+// Network getters
+// -----------------------------------------------------------------------------
 
 Array<u8> Path::ipv4() const {
     Array<u8> res;
-    Path b = isUrl() || isTagged() ? base() : *this;
-    if (b.parts.size() >= 5 && b.parts[0] == "3") {
+    if (isIPv4() && size() >= 5) {
         for (usz i = 1; i <= 4; ++i) {
-            res.push((u8)b.parts[i].toLong());
+            res.push((u8)(*this)[i].toLong());
         }
     }
     return res;
@@ -595,11 +219,10 @@ Array<u8> Path::ipv4() const {
 
 Array<u8> Path::ipv6() const {
     Array<u8> res;
-    Path b = isUrl() || isTagged() ? base() : *this;
-    if (b.parts.size() > 1 && b.parts[0] == "4") {
-        for (usz i = 1; i < b.parts.size(); ++i) {
-            if (isAllDigits(b.parts[i])) {
-                res.push((u8)b.parts[i].toLong());
+    if (isIPv6() && size() > 1) {
+        for (usz i = 1; i < size(); ++i) {
+            if (isAllDigits((*this)[i])) {
+                res.push((u8)(*this)[i].toLong());
             }
         }
     }
@@ -607,217 +230,161 @@ Array<u8> Path::ipv6() const {
 }
 
 u16 Path::port() const {
-    Path b = isUrl() || isTagged() ? base() : *this;
-    if (b.parts.size() >= 6 && b.parts[0] == "3") {
-        return (u16)b.parts[5].toLong();
+    if (isIPv4()) {
+        if (size() >= 6 && isAllDigits((*this)[5])) {
+            long long p = (*this)[5].toLong();
+            if (p > 0 && p <= 65535) return (u16)p;
+        }
+        return 0;
     }
-    if (b.parts.size() > 0) {
-        const String &last = b.parts[b.parts.size() - 1];
-        if (isAllDigits(last)) {
-            long long val = last.toLong();
-            if (val > 0 && val <= 65535) {
-                return (u16)val;
+    if (isIPv6()) {
+        if (size() > 2) {
+            const String &last = (*this)[size() - 1];
+            if (isAllDigits(last)) {
+                long long p = last.toLong();
+                if (p > 0 && p <= 65535) return (u16)p;
             }
         }
+        return 0;
     }
     return 0;
 }
 
-bool Path::common(const Path &other) const {
-    // When comparing URLs to non-URLs: compare path from URL to other as whole
-    if (isUrl() && !other.isUrl()) {
-        return path().common(other);
-    }
-    if (!isUrl() && other.isUrl()) {
-        return common(other.path());
-    }
+// -----------------------------------------------------------------------------
+// Common path computation with wildcard support (* and **)
+// -----------------------------------------------------------------------------
 
-    if (isUrl() && other.isUrl()) {
-        // Compare base first
-        if (!base().common(other.base())) return false;
-        // Compare path
-        if (!path().common(other.path())) return false;
-        return true;
-    }
+static bool matchFull(const Path &a, usz i, const Path &b, usz j, Path &out) {
+    if (i == a.size() && j == b.size()) return true;
 
-    // Standard sequence comparison with wildcard support:
-    // "" matches any single part
-    // "*" matches any single part
-    // "**" matches any number of parts
-    usz i = 0, j = 0;
-    while (i < parts.size() && j < other.parts.size()) {
-        if (parts[i] == "**") {
-            if (i + 1 == parts.size()) return true; // trailing ** matches rest
-            // Lazy scan for parts[i+1]
-            while (j < other.parts.size()) {
-                Path sub1, sub2;
-                for (usz k = i + 1; k < parts.size(); ++k) sub1.parts.push(parts[k]);
-                for (usz k = j; k < other.parts.size(); ++k) sub2.parts.push(other.parts[k]);
-                if (sub1.common(sub2)) return true;
-                j++;
+    // a[i] == "**"
+    if (i < a.size() && a[i] == "**") {
+        // Try lazy matching: 0, 1, 2, ... items from b
+        for (usz k = 0; j + k <= b.size(); ++k) {
+            Path branch = out;
+            for (usz m = 0; m < k; ++m) branch.push(b[j + m]);
+            if (matchFull(a, i + 1, b, j + k, branch)) {
+                out = branch;
+                return true;
             }
-            return false;
         }
-        if (other.parts[j] == "**") {
-            return other.common(*this);
-        }
+        return false;
+    }
 
-        if (parts[i].isEmpty() || parts[i] == "*" ||
-            other.parts[j].isEmpty() || other.parts[j] == "*" ||
-            parts[i] == other.parts[j]) {
-            i++;
-            j++;
-        } else {
-            return false;
+    // b[j] == "**"
+    if (j < b.size() && b[j] == "**") {
+        for (usz k = 0; i + k <= a.size(); ++k) {
+            Path branch = out;
+            for (usz m = 0; m < k; ++m) branch.push(a[i + m]);
+            if (matchFull(a, i + k, b, j + 1, branch)) {
+                out = branch;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (i < a.size() && j < b.size()) {
+        if (a[i] == "*" && b[j] == "*") {
+            out.push("*");
+            return matchFull(a, i + 1, b, j + 1, out);
+        } else if (a[i] == "*") {
+            out.push(b[j]);
+            return matchFull(a, i + 1, b, j + 1, out);
+        } else if (b[j] == "*") {
+            out.push(a[i]);
+            return matchFull(a, i + 1, b, j + 1, out);
+        } else if (a[i] == b[j]) {
+            out.push(a[i]);
+            return matchFull(a, i + 1, b, j + 1, out);
         }
     }
 
-    if (i < parts.size() && parts[i] == "**" && i + 1 == parts.size()) return true;
-    if (j < other.parts.size() && other.parts[j] == "**" && j + 1 == other.parts.size()) return true;
-
-    return i == parts.size() && j == other.parts.size();
+    return false;
 }
 
-Array<u32> Path::match(const Path &other) const {
-    Array<u32> extracted;
+Path Path::common(const Path &other) const {
+    // 1. Try full pattern match first (handles *, **)
+    Path fullMatch;
+    if (matchFull(*this, 0, other, 0, fullMatch)) {
+        return fullMatch;
+    }
+
+    // 2. Otherwise return longest common prefix up to divergence
+    Path lcp;
     usz i = 0, j = 0;
-    while (i < parts.size() && j < other.parts.size()) {
-        if (parts[i] == "**") {
-            if (i + 1 == parts.size()) break;
-            while (j < other.parts.size()) {
-                Path sub1, sub2;
-                for (usz k = i + 1; k < parts.size(); ++k) sub1.parts.push(parts[k]);
-                for (usz k = j; k < other.parts.size(); ++k) sub2.parts.push(other.parts[k]);
-                if (sub1.common(sub2)) {
-                    Array<u32> subM = sub1.match(sub2);
-                    for (usz m = 0; m < subM.size(); ++m) extracted.push(subM[m]);
-                    return extracted;
-                }
-                j++;
-            }
+    while (i < size() && j < other.size()) {
+        if ((*this)[i] == "*" && other[j] == "*") {
+            lcp.push("*");
+            i++; j++;
+        } else if ((*this)[i] == "*") {
+            lcp.push(other[j]);
+            i++; j++;
+        } else if (other[j] == "*") {
+            lcp.push((*this)[i]);
+            i++; j++;
+        } else if ((*this)[i] == other[j]) {
+            lcp.push((*this)[i]);
+            i++; j++;
+        } else {
             break;
         }
-        if (parts[i] == "*" || parts[i].isEmpty()) {
-            if (isAllDigits(other.parts[j])) {
-                extracted.push((u32)other.parts[j].toLong());
-            } else {
-                extracted.push((u32)j);
-            }
-            i++;
-            j++;
-        } else {
-            i++;
-            j++;
-        }
     }
-    return extracted;
+    return lcp;
 }
 
+// -----------------------------------------------------------------------------
+// Serialization
+// -----------------------------------------------------------------------------
+
 String Path::toString() const {
-    if (parts.isEmpty()) return "";
+    if (isEmpty()) return "";
 
-    // 1. Root path
-    if (isRoot()) {
-        String s = "/";
-        for (usz i = 1; i < parts.size(); ++i) {
-            if (i > 1) s += "/";
-            s += parts[i];
+    if (isIPv4() && size() >= 5) {
+        String s = (*this)[1] + "." + (*this)[2] + "." + (*this)[3] + "." + (*this)[4];
+        if (size() >= 6) {
+            s += ":" + (*this)[5];
         }
         return s;
     }
 
-    // 2. Tagged path
-    if (isTagged()) {
-        Path b = base();
-        String s = b.toString();
-        Array<String> tags = getTags();
-        for (usz i = 0; i < tags.size(); ++i) {
-            s += "#" + tags[i];
-        }
-        return s;
-    }
-
-    // 3. IPv4
-    if (parts.size() >= 5 && parts[0] == "3") {
-        String s = parts[1] + "." + parts[2] + "." + parts[3] + "." + parts[4];
-        if (parts.size() >= 6) {
-            s += ":" + parts[5];
-        }
-        return s;
-    }
-
-    // 4. IPv6
-    if (parts.size() > 1 && parts[0] == "4") {
+    if (isIPv6() && size() > 1) {
         String s;
-        for (usz i = 1; i < parts.size(); ++i) {
+        usz lastIdx = (size() > 2 && isAllDigits((*this)[size() - 1])) ? size() - 1 : size();
+        for (usz i = 1; i < lastIdx; ++i) {
             if (i > 1) s += ":";
-            s += parts[i];
+            s += (*this)[i];
+        }
+        if (lastIdx < size()) {
+            s = "[" + s + "]:" + (*this)[size() - 1];
         }
         return s;
     }
 
-    // 5. URL
-    if (isUrl()) {
-        String schema = getSchema();
-        String method = getMethod();
-        Path b = base();
-        Path p = path();
-        Array<String> tags = getTags();
-
+    if (isControl()) {
         String s;
-        if (!schema.isEmpty()) {
-            s += schema + "://";
-        }
-        if (!method.isEmpty()) {
-            s += method + "@";
-        }
-        s += b.toString();
-        if (!p.isEmpty()) {
-            s += "/" + p.toString();
-        }
-
-        // Params
-        usz baseLen = (usz)parts[3].toLong();
-        usz pathOffset = 4 + baseLen;
-        usz pathLen = (usz)parts[pathOffset].toLong();
-        usz tagOffset = pathOffset + 1 + pathLen;
-        usz paramOffset = tagOffset + 1;
-
-        bool firstParam = true;
-        for (usz i = paramOffset; i + 1 < parts.size(); i += 2) {
-            s += firstParam ? "?" : "&";
-            firstParam = false;
-            s += parts[i] + "=" + parts[i + 1];
-        }
-
-        if (tags.size() > 0 && !tags[0].isEmpty()) {
-            s += "#" + tags[0];
+        for (usz i = 0; i < size(); ++i) {
+            if (i > 0) s += ",";
+            s += (*this)[i];
         }
         return s;
     }
 
-    // 6. Host with port or relative path
-    if (parts.size() == 2 && isAllDigits(parts[1]) && !parts[1].isEmpty()) {
-        long long p = parts[1].toLong();
-        if (p > 0 && p <= 65535) {
-            return parts[0] + ":" + parts[1];
+    if (isRoot()) {
+        if (size() == 1) return "/";
+        String s;
+        for (usz i = 1; i < size(); ++i) {
+            s += "/" + (*this)[i];
         }
+        return s;
     }
+
     String s;
-    for (usz i = 0; i < parts.size(); ++i) {
+    for (usz i = 0; i < size(); ++i) {
         if (i > 0) s += "/";
-        s += parts[i];
+        s += (*this)[i];
     }
     return s;
 }
 
-bool Path::operator==(const Path &other) const {
-    if (parts.size() != other.parts.size()) return false;
-    for (usz i = 0; i < parts.size(); ++i) {
-        if (parts[i] != other.parts[i]) return false;
-    }
-    return true;
-}
-
 } // namespace Ksee
-

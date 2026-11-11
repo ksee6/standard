@@ -6,7 +6,7 @@
 #ifndef KSEE_MATH_TRIG_HPP
 #define KSEE_MATH_TRIG_HPP
 
-#include "../Types.hpp"
+#include "../Ksee.hpp"
 
 namespace Ksee {
 

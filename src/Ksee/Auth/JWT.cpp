@@ -4,8 +4,7 @@
  */
 
 #include "../../../include/Ksee/Auth/JWT.hpp"
-#include "../../../include/Ksee/Crypto/SHA.hpp"
-#include "../../../include/Ksee/Format/Yaml.hpp"
+#include "../../../include/Ksee/Algorithm/SHA.hpp"
 #include <string.h>
 #include <stdio.h>
 
@@ -158,7 +157,7 @@ String JWT::seal(const Tree<void> *tree, const String &key) {
     if (!tree || tree->isNull()) {
         return "";
     }
-    String json = Yaml::toJSON(*tree, 0);
+    String json = stringifyJSON(*tree, 0);
     return seal(json, key);
 }
 

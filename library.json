@@ -1,18 +1,20 @@
 {
   "name": "standard",
   "version": "0.0.1",
-  "description": "The Zero-Exception C++ Standard Library designed for embedded systems and real-time workloads.",
+  "description": "Ksee's standard, a repository that contains high efficiency code and types, that are used a lot in a varity of projects.",
   "keywords": [
-    "esp32",
-    "embedded",
-    "crypto",
-    "monocypher",
-    "cli",
-    "sandbox",
-    "graphics",
-    "collections",
+    "regex",
+    "array",
+    "standard",
+    "math",
+    "terminal",
+    "string",
+    "filesystem",
+    "path",
     "yaml",
-    "networking"
+    "json",
+    "trig",
+    "debug"
   ],
   "repository": {
     "type": "git",
@@ -20,7 +22,7 @@
   },
   "authors": [
     {
-      "name": "Abderrahmene MERZOUG (ksee6)"
+      "name": "Abderrahmene Merzoug (ksee6)"
     }
   ],
   "license": "Apache-2.0",
@@ -32,7 +34,6 @@
   "build": {
     "flags": [
       "-Iinclude",
-      "-Ipackages/monocypher",
       "-std=c++17",
       "-O3"
     ]

@@ -25,8 +25,6 @@ inline void Fatal(const String &msg)   { printf("%s  %s\n", Red(Bold("✗")).c_s
 
 } // namespace Terminal
 
-using namespace Terminal;
-
 } // namespace Ksee
 
 #endif // KSEE_TERMINAL_FORMAT_HPP
