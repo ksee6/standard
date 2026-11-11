@@ -11,10 +11,6 @@
 #include "../Path.hpp"
 #include "Handle.hpp"
 
-#ifndef KSEE_EXPORT
-#define KSEE_EXPORT
-#endif
-
 namespace Ksee {
 namespace Resource {
 
@@ -22,7 +18,7 @@ namespace Resource {
  * @class FS
  * @brief Abstract Virtual Filesystem with sandboxed containment, root, and preamble prefixes.
  */
-class KSEE_EXPORT FS {
+class FS {
 public:
     String root;     ///< Full path on machine, subtracted and never escapable.
     String preamble; ///< Path appended after root, visible inside, never escapable.
@@ -63,7 +59,7 @@ public:
  * @class OSFilesystem
  * @brief Concrete Linux host filesystem implementation adhering to the FS interface.
  */
-class KSEE_EXPORT OSFilesystem : public FS {
+class OSFilesystem : public FS {
 public:
     OSFilesystem() = default;
     virtual ~OSFilesystem() = default;
@@ -73,7 +69,7 @@ public:
 };
 
 // Global default filesystem singleton
-extern KSEE_EXPORT OSFilesystem fs;
+extern OSFilesystem fs;
 
 } // namespace Resource
 

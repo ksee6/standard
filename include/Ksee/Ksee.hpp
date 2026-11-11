@@ -13,6 +13,7 @@
 #include "Map.hpp"
 #include "Set.hpp"
 #include "Tree.hpp"
+#include "Resource/Comms.hpp"
 
 namespace Ksee {
     using byte = bool;

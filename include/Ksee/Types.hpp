@@ -236,6 +236,16 @@ inline typename RemoveRef<T>::Type &&Move(T &&arg) noexcept {
   return static_cast<typename RemoveRef<T>::Type &&>(arg);
 }
 
+template <typename T>
+inline constexpr T &&Forward(typename RemoveRef<T>::Type &arg) noexcept {
+  return static_cast<T &&>(arg);
+}
+
+template <typename T>
+inline constexpr T &&Forward(typename RemoveRef<T>::Type &&arg) noexcept {
+  return static_cast<T &&>(arg);
+}
+
 template <bool B, typename T = void> struct EnableIf {};
 template <typename T> struct EnableIf<true, T> { using Type = T; };
 

@@ -1,47 +1,74 @@
+/**
+ * @file Set.hpp
+ * @brief High-performance Invertible Mathematical Set backed by Map<T, bool>.
+ */
+
 #ifndef KSEE_SET_HPP
 #define KSEE_SET_HPP
 
-#include "Array.hpp"
-#include "Math/Interval.hpp"
+#include "Map.hpp"
 
 namespace Ksee {
 
 template <typename T>
 class Set {
 public:
-    Array<T> elements;
+    Map<T, bool> map;
     bool isInversed = false;
 
     Set() : isInversed(false) {}
 
-    bool includes(const T& val) const {
-        bool found = false;
-        for (usz i = 0; i < elements.size(); ++i) {
-            if (elements[i] == val) {
-                found = true;
-                break;
-            }
-        }
+    bool has(const T &val) const {
+        bool found = map.has(val);
         return isInversed ? !found : found;
     }
 
-    bool operator()(const T& val) const {
-        return includes(val);
+    bool includes(const T &val) const {
+        return has(val);
     }
 
-    void add(const T& val) {
-        if (!includes(val)) {
-            elements.push(val);
+    bool operator()(const T &val) const {
+        return has(val);
+    }
+
+    void add(const T &val) {
+        if (!isInversed) {
+            map.put(val, true);
+        } else {
+            // In an inverted set (universal complement / blacklist),
+            // adding an element to the set means removing it from the blacklist.
+            map.remove(val);
         }
     }
 
-    void del(const T& val) {
-        for (usz i = 0; i < elements.size(); ++i) {
-            if (elements[i] == val) {
-                elements.remove(i);
-                break;
-            }
+    void del(const T &val) {
+        if (!isInversed) {
+            map.remove(val);
+        } else {
+            // Removing an element from an inverted set means adding it to the blacklist.
+            map.put(val, true);
         }
+    }
+
+    void remove(const T &val) {
+        del(val);
+    }
+
+    usz size() const {
+        return map.size();
+    }
+
+    usz length() const {
+        return size();
+    }
+
+    bool isEmpty() const {
+        return map.isEmpty() && !isInversed;
+    }
+
+    void clear() {
+        map.clear();
+        isInversed = false;
     }
 
     Set<T> bar() const {
@@ -54,52 +81,104 @@ public:
         return bar();
     }
 
-    Set<T> operator&(const Set<T>& o) const {
-        Set<T> res;
-        for (usz i = 0; i < elements.size(); ++i) {
-            if (o.includes(elements[i])) {
-                res.add(elements[i]);
+    Set<T> operator&(const Set<T> &o) const {
+        if (!isInversed && !o.isInversed) {
+            Set<T> res;
+            const Set<T> &smaller = (size() <= o.size()) ? *this : o;
+            const Set<T> &larger = (size() <= o.size()) ? o : *this;
+            for (auto &entry : smaller.map) {
+                if (larger.has(entry.key))
+                    res.add(entry.key);
             }
+            return res;
         }
-        return res;
-    }
-
-    Set<T> operator|(const Set<T>& o) const {
-        Set<T> res = *this;
-        for (usz i = 0; i < o.elements.size(); ++i) {
-            res.add(o.elements[i]);
+        if (isInversed && o.isInversed) {
+            // ~A & ~B = ~(A | B)
+            Set<T> res;
+            res.isInversed = true;
+            for (auto &e : map) res.map.put(e.key, true);
+            for (auto &e : o.map) res.map.put(e.key, true);
+            return res;
         }
-        return res;
-    }
-
-    Set<T> operator-(const Set<T>& o) const {
-        Set<T> res;
-        for (usz i = 0; i < elements.size(); ++i) {
-            if (!o.includes(elements[i])) {
-                res.add(elements[i]);
+        if (!isInversed && o.isInversed) {
+            // A & ~B = A \ B
+            Set<T> res;
+            for (auto &e : map) {
+                if (o.has(e.key))
+                    res.add(e.key);
             }
+            return res;
+        }
+        // ~A & B = B \ A
+        Set<T> res;
+        for (auto &e : o.map) {
+            if (has(e.key))
+                res.add(e.key);
         }
         return res;
     }
 
-    bool has(const T& val) const {
-        return includes(val);
+    Set<T> operator|(const Set<T> &o) const {
+        if (!isInversed && !o.isInversed) {
+            Set<T> res = *this;
+            for (auto &entry : o.map) {
+                res.add(entry.key);
+            }
+            return res;
+        }
+        if (isInversed && o.isInversed) {
+            // ~A | ~B = ~(A & B)
+            Set<T> res;
+            res.isInversed = true;
+            for (auto &e : map) {
+                if (o.map.has(e.key))
+                    res.map.put(e.key, true);
+            }
+            return res;
+        }
+        if (isInversed && !o.isInversed) {
+            Set<T> res = *this;
+            for (auto &e : o.map) {
+                res.add(e.key);
+            }
+            return res;
+        }
+        Set<T> res = o;
+        for (auto &e : map) {
+            res.add(e.key);
+        }
+        return res;
     }
 
-    // Iterator support
-    const T* begin() const {
-        return elements.begin();
+    Set<T> operator-(const Set<T> &o) const {
+        return (*this) & (~o);
     }
 
-    const T* end() const {
-        return elements.end();
+    Array<T> toArray() const {
+        return map.keys();
     }
-    T* begin() {
-        return elements.begin();
-    }
-    T* end() {
-        return elements.end();
-    }
+
+    // Iterator support for range-based for loops
+    struct Iterator {
+        typename Map<T, bool>::Iterator it;
+        Iterator(typename Map<T, bool>::Iterator i) : it(i) {}
+        bool operator!=(const Iterator &o) const { return it != o.it; }
+        Iterator &operator++() { ++it; return *this; }
+        const T &operator*() const { return it->key; }
+    };
+
+    struct ConstIterator {
+        typename Map<T, bool>::ConstIterator it;
+        ConstIterator(typename Map<T, bool>::ConstIterator i) : it(i) {}
+        bool operator!=(const ConstIterator &o) const { return it != o.it; }
+        ConstIterator &operator++() { ++it; return *this; }
+        const T &operator*() const { return it->key; }
+    };
+
+    Iterator begin() { return Iterator(map.begin()); }
+    Iterator end() { return Iterator(map.end()); }
+    ConstIterator begin() const { return ConstIterator(map.begin()); }
+    ConstIterator end() const { return ConstIterator(map.end()); }
 };
 
 } // namespace Ksee

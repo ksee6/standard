@@ -1,7 +1,6 @@
 /**
  * @file Map.hpp
- * @brief High-performance Robin Hood hash map implementation for the Xi
- * framework.
+ * @brief High-performance Robin Hood hash map implementation for Ksee.
  */
 
 #ifndef KSEE_MAP_HPP
@@ -26,6 +25,9 @@ template <typename K, typename V> struct MapEntry {
 
   MapEntry(K &&k, V &&v, u32 h)
       : key(Ksee::Move(k)), value(Ksee::Move(v)), fnvHash(h | 1) {}
+
+  MapEntry(const K &k, const V &v, u32 h)
+      : key(k), value(v), fnvHash(h | 1) {}
 
   MapEntry(MapEntry &&o) noexcept
       : key(Ksee::Move(o.key)), value(Ksee::Move(o.value)), fnvHash(o.fnvHash) {
@@ -74,6 +76,10 @@ private:
     return (h32 | 1);
   }
 
+  static inline usz bucket_index(u32 h, usz capMask) {
+    return ((usz)h >> 1) & capMask;
+  }
+
   void allocate_buckets(usz newCap) {
     if (newCap < MIN_CAPACITY)
       newCap = MIN_CAPACITY;
@@ -97,7 +103,7 @@ private:
                        V &&val, bool overwrite) {
     usz hRaw = FNVHasher<K>::fnvHash(key);
     u32 h = clean_hash(hRaw);
-    usz idx = (usz)h & capMask;
+    usz idx = bucket_index(h, capMask);
     usz psl = 0;
 
     MapEntry<K, V> toInsert(Ksee::Move(key), Ksee::Move(val), h);
@@ -113,7 +119,7 @@ private:
           slot.value = Ksee::Move(toInsert.value);
         return false;
       }
-      usz slotHome = (usz)(slot.fnvHash) & capMask;
+      usz slotHome = bucket_index(slot.fnvHash, capMask);
       usz slotPSL = (idx - slotHome) & capMask;
       if (psl > slotPSL) {
         Ksee::Swap(toInsert, slot);
@@ -145,12 +151,17 @@ private:
 public:
   Map() : count(0), capacity(0), mask(0), threshold(0) {}
 
-  Map(const Map &other) : count(0), capacity(0), mask(0), threshold(0) {
-    if (other.count > 0 && other.capacity > 0) {
-      allocate_buckets(other.capacity);
+  Map(const Map &other)
+      : count(other.count), capacity(other.capacity), mask(other.mask),
+        threshold(other.threshold) {
+    if (other.capacity > 0) {
+      buckets.allocate(other.capacity);
       for (usz i = 0; i < other.capacity; ++i) {
-        if (!other.buckets[i].isEmpty())
-          set(other.buckets[i].key, other.buckets[i].value);
+        if (!other.buckets[i].isEmpty()) {
+          buckets[i] = MapEntry<K, V>(K(other.buckets[i].key),
+                                      V(other.buckets[i].value),
+                                      other.buckets[i].fnvHash);
+        }
       }
     }
   }
@@ -186,11 +197,18 @@ public:
   Map &operator=(const Map &other) {
     if (this != &other) {
       free_buckets();
-      if (other.count > 0 && other.capacity > 0) {
-        allocate_buckets(other.capacity);
+      count = other.count;
+      capacity = other.capacity;
+      mask = other.mask;
+      threshold = other.threshold;
+      if (other.capacity > 0) {
+        buckets.allocate(other.capacity);
         for (usz i = 0; i < other.capacity; ++i) {
-          if (!other.buckets[i].isEmpty())
-            set(other.buckets[i].key, other.buckets[i].value);
+          if (!other.buckets[i].isEmpty()) {
+            buckets[i] = MapEntry<K, V>(K(other.buckets[i].key),
+                                        V(other.buckets[i].value),
+                                        other.buckets[i].fnvHash);
+          }
         }
       }
     }
@@ -262,7 +280,7 @@ public:
       return nullptr;
     usz hRaw = FNVHasher<K>::fnvHash(key);
     u32 h = clean_hash(hRaw);
-    usz idx = (usz)h & mask;
+    usz idx = bucket_index(h, mask);
     usz dist = 0;
     for (usz i = 0; i < capacity; ++i) {
       MapEntry<K, V> &slot = buckets[idx];
@@ -270,7 +288,7 @@ public:
         return nullptr;
       if (slot.fnvHash == h && Equal<K>::eq(slot.key, key))
         return &slot.value;
-      usz slotHome = (usz)(slot.fnvHash) & mask;
+      usz slotHome = bucket_index(slot.fnvHash, mask);
       usz slotDist = (idx - slotHome) & mask;
       if (dist > slotDist)
         return nullptr;
@@ -291,9 +309,35 @@ public:
    * @brief Subscript operator for access or insertion.
    */
   V &operator[](const K &key) {
-    V *existing = get(key);
-    if (existing)
-      return *existing;
+    if (capacity == 0)
+      allocate_buckets(MIN_CAPACITY);
+    if (count >= threshold)
+      resize(capacity * 2);
+
+    usz hRaw = FNVHasher<K>::fnvHash(key);
+    u32 h = clean_hash(hRaw);
+    usz idx = bucket_index(h, mask);
+    usz dist = 0;
+
+    for (usz i = 0; i < capacity; ++i) {
+      MapEntry<K, V> &slot = buckets[idx];
+      if (slot.isEmpty()) {
+        slot = MapEntry<K, V>(K(key), V(), h);
+        count++;
+        return slot.value;
+      }
+      if (slot.fnvHash == h && Equal<K>::eq(slot.key, key)) {
+        return slot.value;
+      }
+      usz slotHome = bucket_index(slot.fnvHash, mask);
+      usz slotDist = (idx - slotHome) & mask;
+      if (dist > slotDist) {
+        break;
+      }
+      idx = (idx + 1) & mask;
+      dist++;
+    }
+
     put(key, V());
     return *get(key);
   }
@@ -307,13 +351,13 @@ public:
       return false;
     usz hRaw = FNVHasher<K>::fnvHash(key);
     u32 h = clean_hash(hRaw);
-    usz idx = (usz)h & mask;
+    usz idx = bucket_index(h, mask);
     usz dist = 0;
     for (usz i = 0; i < capacity; ++i) {
       MapEntry<K, V> &slot = buckets[idx];
       if (slot.isEmpty())
         return false;
-      usz slotHome = (usz)(slot.fnvHash) & mask;
+      usz slotHome = bucket_index(slot.fnvHash, mask);
       usz slotDist = (idx - slotHome) & mask;
       if (dist > slotDist)
         return false;
@@ -326,7 +370,7 @@ public:
             buckets[idx] = MapEntry<K, V>();
             return true;
           }
-          usz nextHome = (usz)(nextSlot.fnvHash) & mask;
+          usz nextHome = bucket_index(nextSlot.fnvHash, mask);
           usz distFromHome = (nextIdx - nextHome) & mask;
           if (distFromHome == 0) {
             buckets[idx] = MapEntry<K, V>();
@@ -336,6 +380,7 @@ public:
           idx = nextIdx;
           nextIdx = (nextIdx + 1) & mask;
         }
+        buckets[idx] = MapEntry<K, V>();
         return true;
       }
       idx = (idx + 1) & mask;
@@ -372,8 +417,8 @@ public:
       } while (ptr < endPtr && ptr->isEmpty());
       return *this;
     }
-    MapEntry<K, V> &operator*() { return *ptr; }
-    MapEntry<K, V> *operator->() { return ptr; }
+    MapEntry<K, V> &operator*() const { return *ptr; }
+    MapEntry<K, V> *operator->() const { return ptr; }
   };
 
   struct ConstIterator {
@@ -416,23 +461,30 @@ public:
   template <typename S = String> S serialize() const {
     S s;
     s.pushVarLong((long long)count);
-    Array<K> keys_arr;
-    for (auto &kv : *this)
-      keys_arr.push(kv.key);
-    // Simple bubble sort for deterministic serialization
-    for (usz i = 0; i < keys_arr.size(); ++i) {
-      for (usz j = i + 1; j < keys_arr.size(); ++j) {
-        if (keys_arr[j] < keys_arr[i]) {
-          K tmp = keys_arr[i];
-          keys_arr[i] = keys_arr[j];
-          keys_arr[j] = tmp;
+    if (count == 0)
+      return s;
+
+    Array<usz> occupied;
+    for (usz i = 0; i < capacity; ++i) {
+      if (!buckets[i].isEmpty())
+        occupied.push(i);
+    }
+
+    // Deterministic sort by key
+    for (usz i = 0; i < occupied.size(); ++i) {
+      for (usz j = i + 1; j < occupied.size(); ++j) {
+        if (buckets[occupied[j]].key < buckets[occupied[i]].key) {
+          usz tmp = occupied[i];
+          occupied[i] = occupied[j];
+          occupied[j] = tmp;
         }
       }
     }
-    for (usz i = 0; i < keys_arr.size(); ++i) {
-      const K &k = keys_arr[i];
-      s += Ksee::serialize<K>(k);
-      s += Ksee::serialize<V>(*get(k));
+
+    for (usz i = 0; i < occupied.size(); ++i) {
+      const MapEntry<K, V> &e = buckets[occupied[i]];
+      s += Ksee::serialize<K>(e.key);
+      s += Ksee::serialize<V>(e.value);
     }
     return s;
   }

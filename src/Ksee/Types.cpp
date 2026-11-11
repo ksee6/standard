@@ -183,7 +183,7 @@ void randomFill(u8 *buffer, usz size) {
 // Uptime Clock Implementation
 // -------------------------------------------------------------------------
 
-#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(MECA_EMBEDDED) || defined(__EMSCRIPTEN__) || defined(__wasm__)
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(MECA_EMBEDDED) || defined(__EMSCRIPTEN__) || defined(__wasm__) || defined(ESP_PLATFORM) || defined(ARDUINO)
 static u64 getBootNanos() {
   struct timespec ts = {0, 0};
 #if defined(CLOCK_BOOTTIME)
@@ -243,7 +243,7 @@ bool isEpochTimeSet = false;
 u64 epochOnStart = 0;
 
 bool autoSetEpochTime() {
-#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__wasm__)
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__wasm__) || defined(ESP_PLATFORM) || defined(ARDUINO)
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == 0 && ts.tv_sec > 0) {
         u64 nowMs = (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000ULL);

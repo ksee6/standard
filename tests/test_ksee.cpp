@@ -5,7 +5,6 @@
 #include "../include/Ksee/Func.hpp"
 #include "../include/Ksee/Iterator.hpp"
 #include "../include/Ksee/Array.hpp"
-#include "../include/Ksee/Sparse.hpp"
 #include "../include/Ksee/String.hpp"
 #include "../include/Ksee/Set.hpp"
 #include "../include/Ksee/Map.hpp"
@@ -14,6 +13,7 @@
 #include "../include/Ksee/Path.hpp"
 #include "../include/Ksee/Tree.hpp"
 #include "../include/Ksee/Resource/Router.hpp"
+#include "../include/Ksee/Resource/Comms.hpp"
 #include "../include/Ksee/Crypto/Hash.hpp"
 #include "../include/Ksee/Crypto/SHA.hpp"
 #include "../include/Ksee/Crypto/Chacha.hpp"
@@ -80,6 +80,29 @@ static void test_array_string() {
     }
     assert(sum == 60);
 
+    // Variadic multi-element constructor: Array(x, y, z) like [...k]
+    Array<int> arrVar(10, 20, 30, 40);
+    assert(arrVar.size() == 4);
+    assert(arrVar[0] == 10 && arrVar[1] == 20 && arrVar[2] == 30 && arrVar[3] == 40);
+
+    // Initializer list constructor: Array<int> a = {1, 2, 3}
+    Array<int> arrInit = {100, 200, 300};
+    assert(arrInit.size() == 3);
+    assert(arrInit[0] == 100 && arrInit[1] == 200 && arrInit[2] == 300);
+
+    // Multi-dimensional shape & transpose
+    Array<int> tensor;
+    tensor.allocate(6);
+    tensor.shape(2, 3);
+    assert(tensor.rank() == 2);
+    assert(tensor.dimensions()[0] == 2);
+    assert(tensor.dimensions()[1] == 3);
+
+    tensor.transpose();
+    assert(tensor.rank() == 2);
+    assert(tensor.dimensions()[0] == 3);
+    assert(tensor.dimensions()[1] == 2);
+
     String s = "Hello, World!";
     assert(s.length() == 13);
     assert(s.startsWith("Hello"));
@@ -102,26 +125,104 @@ static void test_array_string() {
 }
 
 static void test_sparse_set_map() {
-    printf("[TEST] Sparse, Set, Map...\n");
-    Sparse<int> sp;
+    printf("[TEST] Sparse (Unified Array), Set, Map...\n");
+    // 1. Unified Array sparse behavior
+    Array<int> sp;
+    assert(sp.size() == 0);
+    assert(sp.fragmentCount() == 0);
+
     sp[0] = 100;
+    assert(sp.size() == 1);
+    assert(sp.fragmentCount() == 1);
+
     sp[50] = 200;
     assert(sp[0] == 100);
     assert(sp[50] == 200);
+    assert(sp.size() == 51);
+    assert(sp.fragmentCount() == 2);
+    assert(sp[25] == 0); // default value in gap
 
+    // Splitting fragment with break_at
+    sp[51] = 201;
+    sp[52] = 202;
+    sp.break_at(51);
+    assert(sp.fragmentCount() >= 2);
+    assert(sp[50] == 200);
+    assert(sp[51] == 201);
+    assert(sp[52] == 202);
+
+    // Lazy flattening into contiguous memory via data()
+    int *flat = sp.data();
+    assert(flat != nullptr);
+    assert(flat[0] == 100);
+    assert(flat[50] == 200);
+    assert(flat[51] == 201);
+    assert(flat[52] == 202);
+    assert(sp.fragmentCount() == 1); // Now single contiguous block
+
+    // 2. Set backed by Map<T, bool>
     Set<String> set;
     set.add("apple");
     set.add("banana");
     assert(set.has("apple"));
+    assert(set.has("banana"));
     assert(!set.has("cherry"));
+    assert(set("apple") == true);  // Callable functor / predicate
+    assert(set("cherry") == false);
+    assert(set.size() == 2);
 
+    // Range-based for loop over set
+    int count = 0;
+    for (const String &item : set) {
+        assert(item == "apple" || item == "banana");
+        count++;
+    }
+    assert(count == 2);
+
+    // Invertible set / complement (~set)
+    Set<String> blacklist;
+    blacklist.add("banned_user");
+    Set<String> whitelist = ~blacklist;
+    assert(whitelist.has("regular_user") == true);
+    assert(whitelist.has("banned_user") == false);
+    assert(whitelist("regular_user") == true);
+    assert(whitelist("banned_user") == false);
+
+    // Set operations
+    Set<String> s1; s1.add("A"); s1.add("B");
+    Set<String> s2; s2.add("B"); s2.add("C");
+    Set<String> sUnion = s1 | s2;
+    assert(sUnion.has("A") && sUnion.has("B") && sUnion.has("C"));
+    Set<String> sInter = s1 & s2;
+    assert(sInter.has("B") && !sInter.has("A") && !sInter.has("C"));
+    Set<String> sDiff = s1 - s2;
+    assert(sDiff.has("A") && !sDiff.has("B"));
+
+    // 3. Map (Robin Hood hash map with odd & even bucket distribution)
     Map<String, int> map;
     map.put("first", 1);
     map.put("second", 2);
     assert(map.has("first"));
     assert(*map.get("first") == 1);
     assert(*map.get("second") == 2);
-    printf("  PASS: Sparse, Set, Map\n");
+
+    // operator[] access and auto-insertion
+    map["third"] = 3;
+    assert(map["third"] == 3);
+    assert(map.size() == 3);
+
+    // Map copy constructor
+    Map<String, int> mapCopy = map;
+    assert(mapCopy.size() == 3);
+    assert(*mapCopy.get("first") == 1);
+    assert(*mapCopy.get("third") == 3);
+
+    // Removal
+    assert(map.remove("second") == true);
+    assert(!map.has("second"));
+    assert(map.size() == 2);
+
+    printf("  PASS: Sparse (Unified Array), Set, Map\n");
 }
 
 static void test_uuid() {
@@ -999,7 +1100,7 @@ static void test_iterator() {
 static void test_resource_handle_fs() {
     printf("[TEST] Resource Handle & FS...\n");
     // 1. Packet & In-Memory Handle
-    Packet p("hello world");
+    Handle::Packet p("hello world");
     p.author = 42;
     p.position = 100;
     assert(p.author == 42);
@@ -1007,7 +1108,7 @@ static void test_resource_handle_fs() {
     assert(p == "hello world");
     assert(p.length() == 11);
 
-    Packet copy = p;
+    Handle::Packet copy = p;
     assert(copy.author == 42);
     assert(copy == "hello world");
 
@@ -1052,6 +1153,39 @@ static void test_resource_handle_fs() {
     printf("  PASS: Resource Handle & FS\n");
 }
 
+static void test_comms() {
+    printf("[TEST] Resource Comms (Standard Packet & Band)...\n");
+
+    // 1. Standard Packet
+    Ksee::Resource::Comms::Packet pkt("Test payload", 5, 2, 100, 500, true, true, false);
+    assert(pkt.handle == 5);
+    assert(pkt.intent == 2);
+    assert(pkt.offset == 100);
+    assert(pkt.intendedLength == 500);
+    assert(pkt.reliable == true);
+    assert(pkt.ordered == true);
+    assert(pkt.sacrificial == false);
+    assert(pkt.payload == "Test payload");
+
+    // 2. Standard Band
+    Ksee::Resource::Comms::Band band;
+    assert(band.couldPush());
+    assert(band.duty == 0);
+    assert(band.maxBundleSize == 1400);
+
+    String sentData;
+    band.sendCallback = [&](String b) { sentData = b; };
+    band.push("Hello Band");
+    assert(sentData == "Hello Band");
+    assert(band.duty >= 1);
+
+    // Stun
+    band.stun(100);
+    assert(!band.couldPush());
+
+    printf("  PASS: Resource Comms (Standard Packet & Band)\n");
+}
+
 int main() {
     printf("========================================\n");
     printf("Running Ksee Standard Test Suite\n");
@@ -1061,6 +1195,7 @@ int main() {
     test_func();
     test_iterator();
     test_resource_handle_fs();
+    test_comms();
     test_array_string();
     test_sparse_set_map();
     test_uuid();

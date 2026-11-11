@@ -17,15 +17,7 @@
 
 namespace Ksee {
 
-template <typename T>
-inline T&& Forward(typename RemoveRef<T>::Type& t) noexcept {
-    return static_cast<T&&>(t);
-}
 
-template <typename T>
-inline T&& Forward(typename RemoveRef<T>::Type&& t) noexcept {
-    return static_cast<T&&>(t);
-}
 
 struct YieldContext {
     void* userPtr = nullptr;

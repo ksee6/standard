@@ -9,7 +9,6 @@
 #include "../Types.hpp"
 #include "../String.hpp"
 #include "../Array.hpp"
-#include "../Sparse.hpp"
 #include "../Tree.hpp"
 #include "../Crypto/ECC.hpp"
 #include "../Crypto/Hash.hpp"
@@ -60,9 +59,9 @@ public:
      * @param allWrits Pool of all writs.
      * @param roots Trusted roots (can be 32B public keys, private keys, or secrets).
      * @param now Current epoch ms. If 0, 'starts' and 'expires' are ignored.
-     * @return Sparse array of chains of trust (each chain is a Sparse<Tree<void>> ordered root to leaf).
+     * @return Array of chains of trust (each chain is an Array<Tree<void>> ordered root to leaf).
      */
-    static Sparse<Sparse<Tree<void>>> validate(
+    static Array<Array<Tree<void>>> validate(
         const Array<String> &leafPublicHints,
         const Array<Tree<void>> &allWrits,
         const Array<String> &roots,
@@ -74,7 +73,7 @@ public:
      * Parents mask first; children cannot elevate permissions beyond parent constraints.
      * Returns an effective permission Tree that can be queried with query("path").
      */
-    static Tree<void> mask(const Sparse<Tree<void>> &chain);
+    static Tree<void> mask(const Array<Tree<void>> &chain);
 };
 
 } // namespace Ksee

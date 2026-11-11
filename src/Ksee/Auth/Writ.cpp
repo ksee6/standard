@@ -117,13 +117,13 @@ static Array<VouchInfo> extractVouches(const Tree<void> &w) {
     return list;
 }
 
-Sparse<Sparse<Tree<void>>> Writ::validate(
+Array<Array<Tree<void>>> Writ::validate(
     const Array<String> &leafPublicHints,
     const Array<Tree<void>> &allWrits,
     const Array<String> &roots,
     u64 now
 ) {
-    Sparse<Sparse<Tree<void>>> allChains;
+    Array<Array<Tree<void>>> allChains;
     usz n = allWrits.size();
     if (n == 0) return allChains;
 
@@ -269,7 +269,7 @@ Sparse<Sparse<Tree<void>>> Writ::validate(
     std::function<void(usz, usz, Array<usz>&, Array<bool>&)> dfs =
         [&](usz curr, usz target, Array<usz> &path, Array<bool> &visited) {
             if (curr == target) {
-                Sparse<Tree<void>> chain;
+                Array<Tree<void>> chain;
                 for (usz p = 0; p < path.size(); ++p) {
                     chain.push(allWrits[path[p]]);
                 }
@@ -325,7 +325,7 @@ static void collectLeafRules(
     }
 }
 
-Tree<void> Writ::mask(const Sparse<Tree<void>> &chain) {
+Tree<void> Writ::mask(const Array<Tree<void>> &chain) {
     Tree<void> result;
     if (chain.size() == 0) return result;
 

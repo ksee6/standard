@@ -12,12 +12,9 @@
 #include "../Func.hpp"
 #include "../Iterator.hpp"
 #include "../Path.hpp"
+#include "Comms.hpp"
 #include <type_traits>
 #include <tuple>
-
-#ifndef KSEE_EXPORT
-#define KSEE_EXPORT
-#endif
 
 namespace Ksee {
 namespace Resource {
@@ -118,7 +115,7 @@ namespace HandleTypes {
     };
 }
 
-using Packet = HandleTypes::Packet;
+using HandlePacket = HandleTypes::Packet;
 
 struct HandleCore {
     String path;
@@ -154,7 +151,7 @@ struct HandleCore {
  * @class Handle
  * @brief Zero-copy, capability-aware virtual stream, OS descriptor & IPC primitive, extending Iterator<String, String>.
  */
-class KSEE_EXPORT Handle : public Iterator<String, String> {
+class Handle : public Iterator<String, String> {
 public:
     using Packet = HandleTypes::Packet;
 
